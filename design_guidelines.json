@@ -1,0 +1,92 @@
+{
+  "project_context": {
+    "name": "Impulse AI",
+    "theme": "dark",
+    "archetype": "Archetype 4 (Swiss & High-Contrast) + Premium Dark Mode",
+    "vibe": "Clean, minimal, premium — closer to Linear or Perplexity than ChatGPT. Obsidian black base, electric blue kinetic trigger."
+  },
+  "global_styles": {
+    "colors": {
+      "background": "#0a0a0a",
+      "surface": "#111111",
+      "surface_elevated": "#1a1a1a",
+      "border": "rgba(255,255,255,0.08)",
+      "border_hover": "rgba(255,255,255,0.15)",
+      "primary": "#3b82f6",
+      "primary_hover": "#60a5fa",
+      "primary_glow": "rgba(59,130,246,0.3)",
+      "text": {
+        "primary": "#fafafa",
+        "secondary": "#a1a1aa",
+        "muted": "#52525b"
+      }
+    },
+    "typography": {
+      "font_family": {
+        "headings": "'Outfit', sans-serif",
+        "body": "'Manrope', sans-serif",
+        "mono": "'JetBrains Mono', monospace"
+      },
+      "rules": [
+        "Headings MUST use tight tracking (tracking-tight).",
+        "Overlines / Labels MUST be Uppercase + Tiny + Wide Spacing (tracking-[0.2em]).",
+        "Body text MUST be text-base or text-sm for density.",
+        "MUST include Google Fonts import for Outfit and Manrope in index.css."
+      ]
+    },
+    "surfaces": {
+      "cards": "bg-[#111111] border border-white/10 rounded-xl shadow-none transition-all hover:bg-[#151515] hover:border-white/20",
+      "glass": "bg-[#0a0a0a]/60 backdrop-blur-xl border-b border-white/10",
+      "input": "bg-white/5 border border-white/10 rounded-lg focus:border-[#3b82f6] focus:ring-1 focus:ring-[#3b82f6]"
+    }
+  },
+  "core_features": {
+    "auth": {
+      "layout": "Split screen layout: Left side full-height image (auth_background) with 40% black overlay. Right side minimal auth form centered.",
+      "components": "Shadcn Form, Input, Button. Sleek border inputs."
+    },
+    "chat_interface": {
+      "layout": "Left sidebar (260px, hidden on mobile by default) + Main chat area.",
+      "sidebar": "Contains Chat History list, Profile settings snippet at bottom, and Plan Status. The Plan Status block must display a usage counter ('8 of 10 daily messages used') visually represented with a progress bar for free users.",
+      "chat_bubbles": {
+        "user": "bg-[#3b82f6]/10 border border-[#3b82f6]/20 text-[#fafafa] rounded-2xl rounded-tr-sm px-4 py-3 max-w-[80%]",
+        "ai": "bg-transparent text-[#e4e4e7] rounded-2xl rounded-tl-sm px-4 py-3 max-w-[85%] border-none"
+      },
+      "feedback_actions": "Thumbs up/down icons (lucide-react) appearing below AI messages in a small muted flex row. Subtle text-neutral-500 hover:text-white transition.",
+      "input_area": "Fixed at bottom. Wrapper: bg-[#111111] border border-white/10 rounded-xl p-2 flex items-end shadow-2xl. Use textarea that auto-resizes. Submit button: Electric blue square icon button."
+    },
+    "pricing": {
+      "layout": "3-column pricing cards in a responsive grid (`grid-cols-1 md:grid-cols-3 gap-6`). Header: text-center, H1 text-4xl to 5xl tracking-tight.",
+      "cards": {
+        "free": "Basic card, standard white/10 border.",
+        "pro_reasoning": "Standard Pro card ($12/mo).",
+        "pro_creative": "Featured Card ($24/mo). Apply 'The Tracing Beam' or 'Glow' effect (simulated via subtle blue border: `border-[#3b82f6]/50` and glowing shadow: `shadow-[0_0_30px_rgba(59,130,246,0.15)]`)."
+      }
+    }
+  },
+  "media": {
+    "images": {
+      "auth_background": {
+        "url": "https://images.pexels.com/photos/36025191/pexels-photo-36025191.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Elegant abstract swirl with soft blue hues on a dark backdrop. Use as split-screen background for Auth page."
+      },
+      "pricing_hero": {
+        "url": "https://images.unsplash.com/photo-1692125440608-4364afbf849b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzd8MHwxfHNlYXJjaHwyfHxkYXJrJTIwbW9kZSUyMGFic3RyYWN0JTIwZ2VvbWV0cnklMjBibHVlfGVufDB8fHx8MTc3NTkwNjI0MXww&ixlib=rb-4.1.0&q=85",
+        "description": "Black and blue abstract painting. Use as subtle 10% to 15% opacity fixed background layer for Pricing page."
+      }
+    },
+    "icons": "lucide-react"
+  },
+  "instructions_to_main_agent": [
+    "Generate pure valid React/Tailwind code in .js / .jsx formats.",
+    "Ensure dark mode is fully enforced. The main background must be #0a0a0a globally.",
+    "Use Shadcn UI components but customize spacing and borders to match the Obsidian + Electric Blue theme.",
+    "Implement 'data-testid' on ALL interactive elements (buttons, inputs, feedback icons, plan toggles).",
+    "Pricing page MUST implement Stripe checkout logic (mocked if necessary, but flow should be complete).",
+    "Feedback logs: create logic to handle and log {user_id, message_id, rating, timestamp} when thumbs up/down is clicked.",
+    "Chat input must handle 'Enter' to submit and 'Shift+Enter' for new line.",
+    "The counter for free users should be prominently visible in the sidebar with an upgrade button.",
+    "Strictly import and use Outfit and Manrope from Google Fonts. Do NOT use Inter.",
+    "Ensure high contrast and accessibility for all text over the dark backgrounds."
+  ]
+}

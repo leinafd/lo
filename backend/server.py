@@ -4,7 +4,8 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, UploadFile, File, Query, Header
+from fastapi.responses import Response as FastAPIResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
@@ -14,10 +15,14 @@ import jwt
 import secrets
 import random
 import math
+import uuid
+import base64
+import requests as sync_requests
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
+from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -114,6 +119,49 @@ def get_default_user_fields():
     }
 
 # ---------------------
+# Object Storage
+# ---------------------
+STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
+APP_NAME = "impulse-ai"
+storage_key = None
+
+def init_storage():
+    global storage_key
+    if storage_key:
+        return storage_key
+    emergent_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not emergent_key:
+        logger.warning("EMERGENT_LLM_KEY not set, storage disabled")
+        return None
+    resp = sync_requests.post(f"{STORAGE_URL}/init", json={"emergent_key": emergent_key}, timeout=30)
+    resp.raise_for_status()
+    storage_key = resp.json()["storage_key"]
+    return storage_key
+
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    if not key:
+        raise HTTPException(status_code=500, detail="Storage not configured")
+    resp = sync_requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": content_type},
+        data=data, timeout=120
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+def get_object(path: str):
+    key = init_storage()
+    if not key:
+        raise HTTPException(status_code=500, detail="Storage not configured")
+    resp = sync_requests.get(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key}, timeout=60
+    )
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+# ---------------------
 # Password Utilities
 # ---------------------
 def hash_password(password: str) -> str:
@@ -188,6 +236,10 @@ class CheckoutRequest(BaseModel):
 class CreditPurchaseRequest(BaseModel):
     pack_id: str  # "starter", "standard", "power"
     origin_url: str
+
+class ImageGenRequest(BaseModel):
+    prompt: str
+    chat_id: Optional[str] = None
 
 # ---------------------
 # Brute Force Protection
@@ -324,15 +376,54 @@ async def refresh_token(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 # ---------------------
-# Chat Endpoints
+# Chat Endpoints (Claude Integration)
 # ---------------------
-PLACEHOLDER_RESPONSES = [
-    "I'm Impulse AI, your intelligent assistant. This is a placeholder response -- AI integration coming soon!",
-    "Great question! Once AI is connected, I'll provide real insights here. For now, this is a demo response.",
-    "Interesting thought. Impulse AI will process this with advanced reasoning once the AI engine is live.",
-    "I appreciate your message! This is a placeholder -- the full AI experience is on its way.",
-    "That's a fascinating topic. Stay tuned for real AI-powered responses in the next update!",
+SYSTEM_MESSAGE = """You are Impulse AI, a premium AI assistant. You are helpful, concise, and knowledgeable. 
+You provide clear, well-structured responses. You can help with coding, writing, analysis, math, and creative tasks.
+Keep responses focused and useful. Use markdown formatting when appropriate."""
+
+FALLBACK_RESPONSES = [
+    "I'm Impulse AI. The AI service is temporarily unavailable due to API key budget limits. Please ensure your Emergent LLM key has sufficient balance.",
+    "The AI engine is currently rate-limited. Please check your API key balance at Profile > Universal Key > Add Balance.",
 ]
+
+async def get_claude_response(chat_id: str, user_id: str, content: str) -> str:
+    """Get response from Claude via emergentintegrations."""
+    try:
+        api_key = os.environ.get("EMERGENT_LLM_KEY")
+        if not api_key:
+            return random.choice(FALLBACK_RESPONSES)
+        
+        # Build conversation history from last 10 messages
+        recent_msgs = await db.messages.find(
+            {"chat_id": chat_id}, {"_id": 0}
+        ).sort("created_at", -1).to_list(10)
+        recent_msgs.reverse()
+        
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"impulse-{chat_id}-{uuid.uuid4()}",
+            system_message=SYSTEM_MESSAGE
+        )
+        chat.with_model("anthropic", "claude-4-sonnet-20250514")
+        
+        # Feed history by appending to messages list
+        for msg in recent_msgs:
+            if msg.get("role") == "user":
+                chat.messages.append({"role": "user", "content": msg["content"]})
+            elif msg.get("role") == "assistant":
+                chat.messages.append({"role": "assistant", "content": msg["content"]})
+        
+        # Send current message
+        user_msg = UserMessage(text=content)
+        response = await chat.send_message(user_msg)
+        return response
+    except Exception as e:
+        logger.error(f"Claude error: {e}")
+        error_str = str(e).lower()
+        if "budget" in error_str or "exceeded" in error_str:
+            return "The AI service budget has been reached. Please add balance to your Emergent Universal Key at Profile > Universal Key > Add Balance."
+        return "I encountered an issue processing your request. Please try again."
 
 @api_router.post("/chat/send")
 async def send_message(req: ChatMessageRequest, request: Request):
@@ -386,9 +477,10 @@ async def send_message(req: ChatMessageRequest, request: Request):
     }
     await db.messages.insert_one(user_msg)
     
-    # Generate placeholder AI response
+    # Get AI response from Claude
+    ai_content = await get_claude_response(chat_id, user_id, req.content)
+    
     ai_msg_id = str(ObjectId())
-    ai_content = random.choice(PLACEHOLDER_RESPONSES)
     ai_msg = {
         "id": ai_msg_id,
         "chat_id": chat_id,
@@ -445,6 +537,121 @@ async def delete_chat(chat_id: str, request: Request):
     await db.chats.delete_one({"_id": ObjectId(chat_id)})
     await db.messages.delete_many({"chat_id": chat_id})
     return {"message": "Chat deleted"}
+
+# ---------------------
+# Image Generation (Nano Banana)
+# ---------------------
+@api_router.post("/image/generate")
+async def generate_image(req: ImageGenRequest, request: Request):
+    user = await get_current_user(request)
+    user_id = user["_id"]
+    role = user.get("role", "free")
+    limits = TIER_LIMITS.get(role, TIER_LIMITS["free"])
+    
+    # Check daily image limit
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    img_limit = limits["daily_images"]
+    if img_limit is not None:
+        last_date = user.get("last_image_date")
+        img_count = user.get("daily_image_count", 0)
+        if last_date != today:
+            img_count = 0
+        if img_count >= img_limit:
+            raise HTTPException(status_code=429, detail="Daily image generation limit reached.")
+        await db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"daily_image_count": img_count + 1, "last_image_date": today}}
+        )
+    
+    try:
+        api_key = os.environ.get("EMERGENT_LLM_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="Image generation not configured")
+        
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"img-{user_id}-{uuid.uuid4()}",
+            system_message="You are an image generation assistant. Generate the requested image."
+        )
+        chat.with_model("gemini", "gemini-3-pro-image-preview").with_params(modalities=["image", "text"])
+        
+        msg = UserMessage(text=req.prompt)
+        text_response, images = await chat.send_message_multimodal_response(msg)
+        
+        if not images:
+            raise HTTPException(status_code=500, detail="No image was generated. Try a different prompt.")
+        
+        # Save first image to object storage
+        img_data = base64.b64decode(images[0]["data"])
+        img_path = f"{APP_NAME}/images/{user_id}/{uuid.uuid4()}.png"
+        put_object(img_path, img_data, "image/png")
+        
+        # Store reference in DB
+        img_id = str(uuid.uuid4())
+        await db.generated_images.insert_one({
+            "id": img_id,
+            "user_id": user_id,
+            "storage_path": img_path,
+            "prompt": req.prompt,
+            "chat_id": req.chat_id,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Also save as a chat message if in a chat context
+        if req.chat_id:
+            ai_msg_id = str(ObjectId())
+            await db.messages.insert_one({
+                "id": ai_msg_id,
+                "chat_id": req.chat_id,
+                "user_id": user_id,
+                "role": "assistant",
+                "content": f"![Generated Image](/api/files/{img_path})\n\n{text_response or ''}",
+                "image_path": img_path,
+                "type": "image",
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+        
+        return {
+            "image_id": img_id,
+            "image_url": f"/api/files/{img_path}",
+            "text": text_response or "",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Image generation error: {e}")
+        raise HTTPException(status_code=500, detail="Image generation failed. Please try again.")
+
+@api_router.get("/files/{path:path}")
+async def serve_file(path: str, request: Request, auth: str = Query(None)):
+    # Auth check - either cookie or query param
+    try:
+        if auth:
+            # Verify the auth token
+            payload = jwt.decode(auth, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+            if payload.get("type") != "access":
+                raise HTTPException(status_code=401, detail="Invalid token")
+        else:
+            await get_current_user(request)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        data, content_type = get_object(path)
+        return FastAPIResponse(content=data, media_type=content_type)
+    except Exception as e:
+        logger.error(f"File serve error: {e}")
+        raise HTTPException(status_code=404, detail="File not found")
+
+@api_router.get("/user/images")
+async def list_user_images(request: Request):
+    user = await get_current_user(request)
+    images = await db.generated_images.find(
+        {"user_id": user["_id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    return images
 
 # ---------------------
 # Feedback Endpoints
@@ -818,6 +1025,13 @@ async def startup():
     await db.chats.create_index("user_id")
     await db.feedback_logs.create_index([("user_id", 1), ("message_id", 1)])
     await db.payment_transactions.create_index("session_id", unique=True)
+    
+    # Initialize object storage
+    try:
+        init_storage()
+        logger.info("Object storage initialized")
+    except Exception as e:
+        logger.warning(f"Storage init failed (non-critical): {e}")
     
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@impulseai.com")

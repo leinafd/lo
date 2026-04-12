@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import ChatSidebar from "@/components/ChatSidebar";
 import ChatMessage from "@/components/ChatMessage";
 import { Button } from "@/components/ui/button";
-import { Send, Loader2, Plus, Menu, X } from "lucide-react";
+import { Send, Loader2, Plus, Menu, X, Image } from "lucide-react";
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -17,6 +17,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [generatingImage, setGeneratingImage] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [usage, setUsage] = useState({ daily_message_count: 0, daily_message_limit: 20, role: "free" });
   const messagesEndRef = useRef(null);
@@ -130,6 +131,44 @@ export default function ChatPage() {
     }
   };
 
+  const generateImage = async () => {
+    if (!input.trim() || generatingImage) return;
+    const prompt = input.trim();
+    setInput("");
+    setGeneratingImage(true);
+
+    const tempUserMsg = { id: "temp-img", role: "user", content: `Generate image: ${prompt}`, created_at: new Date().toISOString() };
+    setMessages((prev) => [...prev, tempUserMsg]);
+
+    try {
+      const { data } = await axios.post(
+        `${API}/api/image/generate`,
+        { prompt, chat_id: activeChatId },
+        { withCredentials: true }
+      );
+
+      setMessages((prev) => {
+        const filtered = prev.filter((m) => m.id !== "temp-img");
+        return [
+          ...filtered,
+          { id: `user-img-${Date.now()}`, role: "user", content: `Generate image: ${prompt}`, created_at: new Date().toISOString() },
+          { id: `ai-img-${Date.now()}`, role: "assistant", content: data.text || "", image_url: data.image_url, type: "image", created_at: new Date().toISOString() },
+        ];
+      });
+
+      fetchUsage();
+      fetchChats();
+    } catch (err) {
+      setMessages((prev) => prev.filter((m) => m.id !== "temp-img"));
+      const detail = err.response?.data?.detail;
+      if (typeof detail === "string" && detail.includes("limit")) {
+        fetchUsage();
+      }
+    } finally {
+      setGeneratingImage(false);
+    }
+  };
+
   const isLimitReached = usage.daily_message_limit !== null && usage.daily_message_limit !== undefined && usage.daily_message_count >= usage.daily_message_limit;
 
   return (
@@ -208,15 +247,13 @@ export default function ChatPage() {
               {messages.map((msg, i) => (
                 <ChatMessage key={msg.id || i} message={msg} />
               ))}
-              {sending && (
+              {(sending || generatingImage) && (
                 <div className="flex gap-3 py-4 animate-fade-in">
                   <div className="w-7 h-7 rounded-lg bg-[#3b82f6]/10 border border-[#3b82f6]/20 flex items-center justify-center shrink-0 mt-0.5">
                     <Loader2 className="w-3.5 h-3.5 text-[#3b82f6] animate-spin" />
                   </div>
                   <div className="flex items-center gap-1.5 pt-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#3b82f6]/40 animate-pulse" />
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#3b82f6]/40 animate-pulse" style={{ animationDelay: "0.15s" }} />
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#3b82f6]/40 animate-pulse" style={{ animationDelay: "0.3s" }} />
+                    <span className="text-xs text-[#52525b]">{generatingImage ? "Generating image..." : "Thinking..."}</span>
                   </div>
                 </div>
               )}
@@ -249,15 +286,25 @@ export default function ChatPage() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={isLimitReached ? "Message limit reached..." : "Message Impulse AI..."}
-                disabled={isLimitReached || sending}
+                disabled={isLimitReached || sending || generatingImage}
                 rows={1}
                 className="flex-1 bg-transparent border-none outline-none resize-none text-[#fafafa] placeholder:text-[#52525b] text-sm py-2 px-2 max-h-32 min-h-[36px]"
                 style={{ fontFamily: "'Manrope', sans-serif" }}
               />
               <Button
+                data-testid="generate-image-button"
+                onClick={generateImage}
+                disabled={!input.trim() || sending || generatingImage || isLimitReached}
+                size="icon"
+                title="Generate image"
+                className="w-9 h-9 bg-white/5 hover:bg-white/10 text-[#a1a1aa] hover:text-white border border-white/10 rounded-lg shrink-0 disabled:opacity-30 transition-all duration-200"
+              >
+                {generatingImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Image className="w-4 h-4" />}
+              </Button>
+              <Button
                 data-testid="send-message-button"
                 onClick={sendMessage}
-                disabled={!input.trim() || sending || isLimitReached}
+                disabled={!input.trim() || sending || generatingImage || isLimitReached}
                 size="icon"
                 className="w-9 h-9 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg shrink-0 disabled:opacity-30 transition-all duration-200"
               >
@@ -265,7 +312,7 @@ export default function ChatPage() {
               </Button>
             </div>
             <p className="text-[10px] text-[#52525b] text-center mt-2">
-              Impulse AI is in preview. Responses are placeholders.
+              Impulse AI is powered by Claude. Image generation by Gemini.
             </p>
           </div>
         </div>

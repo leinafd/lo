@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Comprehensive backend API testing for Impulse AI SaaS app
-Tests all auth, chat, feedback, usage, and Stripe endpoints
+Backend API testing for Impulse AI Phase 1 Changes
+Tests tier limits, credit system, admin dashboard, and new user fields
 """
 
 import requests
@@ -20,6 +20,7 @@ class ImpulseAITester:
         self.test_user_cookies = None
         self.test_chat_id = None
         self.test_message_id = None
+        self.results = []
 
     def log_test(self, name, success, details=""):
         """Log test result"""
@@ -29,6 +30,13 @@ class ImpulseAITester:
             print(f"✅ {name}")
         else:
             print(f"❌ {name} - {details}")
+        
+        self.results.append({
+            "test": name,
+            "success": success,
+            "details": str(details),  # Convert to string to avoid serialization issues
+            "timestamp": datetime.now().isoformat()
+        })
         return success
 
     def make_request(self, method, endpoint, data=None, cookies=None, expected_status=200):
@@ -390,13 +398,16 @@ class ImpulseAITester:
         print("\n📊 Usage Tests")
         self.test_user_usage()
         
-        # Stripe tests
-        print("\n💳 Stripe Tests")
-        self.test_stripe_checkout_create()
-        
-        # Daily limit tests
-        print("\n⏰ Daily Limit Tests")
-        self.test_daily_limit_enforcement()
+        # Phase 1 specific tests
+        print("\n🚀 Phase 1 Tests")
+        self.test_phase1_user_registration()
+        self.test_phase1_admin_role()
+        self.test_phase1_usage_endpoint()
+        self.test_phase1_admin_dashboard()
+        self.test_phase1_credit_packs()
+        self.test_phase1_credit_purchase_restrictions()
+        self.test_phase1_free_user_limits()
+        self.test_phase1_admin_unlimited_messages()
         
         # Results
         print("\n" + "=" * 60)
@@ -406,9 +417,235 @@ class ImpulseAITester:
         
         return self.tests_passed == self.tests_run
 
+    def test_phase1_user_registration(self):
+        """Test POST /api/auth/register - new user gets all new fields"""
+        test_email = f"phase1_user_{int(time.time())}@impulseai.com"
+        response, error = self.make_request('POST', 'auth/register', {
+            'email': test_email,
+            'password': 'test1234',
+            'name': 'Phase1 User'
+        })
+        
+        if not self.log_test("User registration", response and response.status_code == 200, error):
+            return False
+        
+        # Check if user gets free role
+        data = response.json()
+        if not self.log_test("New user gets free role", data.get('role') == 'free', f"Got role: {data.get('role')}"):
+            return False
+        
+        # Test /api/auth/me to check new fields
+        me_response, me_error = self.make_request('GET', 'auth/me')
+        if not self.log_test("GET /api/auth/me after registration", me_response and me_response.status_code == 200, me_error):
+            return False
+        
+        me_data = me_response.json()
+        required_fields = ["daily_message_count", "daily_image_count", "daily_video_count", "video_credits", "limits"]
+        missing_fields = [field for field in required_fields if field not in me_data]
+        
+        return self.log_test("New user has all required fields", len(missing_fields) == 0, f"Missing: {missing_fields}")
+
+    def test_phase1_admin_role(self):
+        """Test admin user has role 'admin' not 'free'"""
+        response, error = self.make_request('POST', 'auth/login', {
+            'email': 'admin@impulseai.com',
+            'password': 'admin123'
+        })
+        
+        if not self.log_test("Admin login", response and response.status_code == 200, error):
+            return False
+        
+        data = response.json()
+        return self.log_test("Admin has role 'admin'", data.get('role') == 'admin', f"Got role: {data.get('role')}")
+
+    def test_phase1_usage_endpoint(self):
+        """Test GET /api/user/usage returns all daily limits, video credits, watermark flag"""
+        response, error = self.make_request('GET', 'user/usage')
+        
+        if not self.log_test("GET /api/user/usage", response and response.status_code == 200, error):
+            return False
+        
+        data = response.json()
+        required_fields = [
+            "role", "daily_message_count", "daily_message_limit",
+            "daily_image_count", "daily_image_limit", 
+            "daily_video_count", "daily_video_limit",
+            "video_credits", "max_video_duration", "video_quality", "watermark", "uses_credits"
+        ]
+        
+        missing_fields = [field for field in required_fields if field not in data]
+        return self.log_test("Usage endpoint returns all required fields", len(missing_fields) == 0, f"Missing: {missing_fields}")
+
+    def test_phase1_admin_dashboard(self):
+        """Test GET /api/admin/dashboard returns user counts, feedback stats, revenue (admin only)"""
+        # Test admin access
+        admin_response, admin_error = self.make_request('POST', 'auth/login', {
+            'email': 'admin@impulseai.com',
+            'password': 'admin123'
+        })
+        
+        if not self.log_test("Admin login for dashboard test", admin_response and admin_response.status_code == 200, admin_error):
+            return False
+        
+        dashboard_response, dashboard_error = self.make_request('GET', 'admin/dashboard')
+        
+        if not self.log_test("GET /api/admin/dashboard (admin access)", dashboard_response and dashboard_response.status_code == 200, dashboard_error):
+            return False
+        
+        data = dashboard_response.json()
+        required_sections = ["users", "feedback", "revenue"]
+        missing_sections = [section for section in required_sections if section not in data]
+        
+        if not self.log_test("Admin dashboard has required sections", len(missing_sections) == 0, f"Missing: {missing_sections}"):
+            return False
+        
+        # Test non-admin access (403)
+        user_response, user_error = self.make_request('POST', 'auth/register', {
+            'email': f'regular_{int(time.time())}@impulseai.com',
+            'password': 'test1234'
+        })
+        
+        if user_response and user_response.status_code == 200:
+            forbidden_response, forbidden_error = self.make_request('GET', 'admin/dashboard', expected_status=403)
+            return self.log_test("GET /api/admin/dashboard returns 403 for non-admin", forbidden_response is not None and forbidden_error == "", f"Error: {forbidden_error}")
+        else:
+            return self.log_test("GET /api/admin/dashboard returns 403 for non-admin", False, "Could not register test user")
+        
+        return True
+
+    def test_phase1_credit_packs(self):
+        """Test GET /api/credits/packs returns 3 credit packs with correct pricing"""
+        response, error = self.make_request('GET', 'credits/packs')
+        
+        if not self.log_test("GET /api/credits/packs", response and response.status_code == 200, error):
+            return False
+        
+        data = response.json()
+        packs = data.get("packs", [])
+        
+        if not self.log_test("Credit packs returns 3 packs", len(packs) == 3, f"Got {len(packs)} packs"):
+            return False
+        
+        # Check specific pricing
+        pack_dict = {pack["id"]: pack for pack in packs}
+        expected_packs = {
+            "starter": {"credits": 50, "amount": 5.0},
+            "standard": {"credits": 120, "amount": 10.0},
+            "power": {"credits": 300, "amount": 20.0}
+        }
+        
+        pricing_correct = True
+        for pack_id, expected in expected_packs.items():
+            if pack_id not in pack_dict:
+                pricing_correct = False
+                break
+            pack = pack_dict[pack_id]
+            if pack.get("credits") != expected["credits"] or pack.get("amount") != expected["amount"]:
+                pricing_correct = False
+                break
+        
+        return self.log_test("Credit packs have correct pricing", pricing_correct, f"Expected: {expected_packs}, Got: {pack_dict}")
+
+    def test_phase1_credit_purchase_restrictions(self):
+        """Test POST /api/credits/purchase returns 403 for non-Creative Pro users"""
+        # Register as free user
+        test_email = f"free_user_{int(time.time())}@impulseai.com"
+        reg_response, reg_error = self.make_request('POST', 'auth/register', {
+            'email': test_email,
+            'password': 'test1234'
+        })
+        
+        if not self.log_test("Register free user for credit test", reg_response and reg_response.status_code == 200, reg_error):
+            return False
+        
+        # Try to purchase credits
+        purchase_response, purchase_error = self.make_request('POST', 'credits/purchase', {
+            'pack_id': 'starter',
+            'origin_url': 'https://example.com'
+        }, expected_status=403)
+        
+        return self.log_test("Credit purchase returns 403 for non-Creative Pro", purchase_response is not None and purchase_error == "", f"Error: {purchase_error}")
+
+    def test_phase1_free_user_limits(self):
+        """Test free user daily message limit is now 20 (not 10)"""
+        # Register new free user
+        test_email = f"limit_test_{int(time.time())}@impulseai.com"
+        reg_response, reg_error = self.make_request('POST', 'auth/register', {
+            'email': test_email,
+            'password': 'test1234'
+        })
+        
+        if not self.log_test("Register user for limit test", reg_response and reg_response.status_code == 200, reg_error):
+            return False
+        
+        # Check usage endpoint
+        usage_response, usage_error = self.make_request('GET', 'user/usage')
+        
+        if not self.log_test("Get usage for limit test", usage_response and usage_response.status_code == 200, usage_error):
+            return False
+        
+        data = usage_response.json()
+        message_limit = data.get("daily_message_limit")
+        image_limit = data.get("daily_image_limit")
+        video_limit = data.get("daily_video_limit")
+        
+        success = True
+        details = []
+        
+        if message_limit != 20:
+            success = False
+            details.append(f"Message limit: expected 20, got {message_limit}")
+        
+        if image_limit != 2:
+            success = False
+            details.append(f"Image limit: expected 2, got {image_limit}")
+        
+        if video_limit != 1:
+            success = False
+            details.append(f"Video limit: expected 1, got {video_limit}")
+        
+        return self.log_test("Free user has correct limits (20/2/1)", success, "; ".join(details))
+
+    def test_phase1_admin_unlimited_messages(self):
+        """Test POST /api/chat/send - admin user can send unlimited messages (no limit)"""
+        # Login as admin
+        admin_response, admin_error = self.make_request('POST', 'auth/login', {
+            'email': 'admin@impulseai.com',
+            'password': 'admin123'
+        })
+        
+        if not self.log_test("Admin login for message test", admin_response and admin_response.status_code == 200, admin_error):
+            return False
+        
+        # Send a message
+        message_response, message_error = self.make_request('POST', 'chat/send', {
+            'content': 'Test admin unlimited messages'
+        })
+        
+        if not self.log_test("Admin can send messages", message_response and message_response.status_code == 200, message_error):
+            return False
+        
+        data = message_response.json()
+        daily_limit = data.get("daily_limit")
+        
+        return self.log_test("Admin has unlimited messages (daily_limit=None)", daily_limit is None, f"Got daily_limit: {daily_limit}")
+
 def main():
     tester = ImpulseAITester()
     success = tester.run_all_tests()
+    
+    # Save detailed results for Phase 1
+    with open("/app/phase1_backend_results.json", "w") as f:
+        json.dump({
+            "summary": {
+                "total_tests": tester.tests_run,
+                "passed_tests": tester.tests_passed,
+                "success_rate": f"{(tester.tests_passed/tester.tests_run*100):.1f}%" if tester.tests_run > 0 else "0%",
+                "timestamp": datetime.now().isoformat()
+            },
+            "results": tester.results
+        }, f, indent=2)
+    
     return 0 if success else 1
 
 if __name__ == "__main__":

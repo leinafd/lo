@@ -12,6 +12,8 @@ import logging
 import bcrypt
 import jwt
 import secrets
+import random
+import math
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
@@ -34,6 +36,82 @@ def get_jwt_secret():
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# ---------------------
+# Tier Limits Configuration
+# ---------------------
+TIER_LIMITS = {
+    "free": {
+        "daily_messages": 20,
+        "daily_images": 2,
+        "daily_videos": 1,
+        "max_video_duration": 5,
+        "video_quality": ["standard"],
+        "watermark": True,
+        "uses_credits": False,
+    },
+    "pro_reasoning": {
+        "daily_messages": None,  # unlimited
+        "daily_images": 10,
+        "daily_videos": 3,
+        "max_video_duration": 10,
+        "video_quality": ["standard", "hd"],
+        "watermark": False,
+        "uses_credits": False,
+    },
+    "pro_creative": {
+        "daily_messages": None,  # unlimited
+        "daily_images": None,  # unlimited
+        "daily_videos": None,  # unlimited (credit-based)
+        "max_video_duration": 15,
+        "video_quality": ["standard", "hd"],
+        "watermark": False,
+        "uses_credits": True,
+        "monthly_credits": 100,
+    },
+    "admin": {
+        "daily_messages": None,
+        "daily_images": None,
+        "daily_videos": None,
+        "max_video_duration": 15,
+        "video_quality": ["standard", "hd"],
+        "watermark": False,
+        "uses_credits": False,
+    },
+}
+
+# Credit top-up packs
+CREDIT_PACKS = {
+    "starter": {"name": "Starter Pack", "credits": 50, "amount": 5.00},
+    "standard": {"name": "Standard Pack", "credits": 120, "amount": 10.00},
+    "power": {"name": "Power Pack", "credits": 300, "amount": 20.00},
+}
+
+def calculate_video_credits(duration_seconds: int, quality: str = "standard") -> int:
+    """Calculate credits for a video generation request."""
+    if duration_seconds <= 5:
+        base = 1
+    elif duration_seconds <= 10:
+        base = 2
+    else:
+        base = 3
+    multiplier = 2 if quality == "hd" else 1
+    return base * multiplier
+
+def get_default_user_fields():
+    """Return default fields for a new user document."""
+    return {
+        "daily_message_count": 0,
+        "daily_image_count": 0,
+        "daily_video_count": 0,
+        "last_message_date": None,
+        "last_image_date": None,
+        "last_video_date": None,
+        "video_credits": 0,
+        "credits_reset_date": None,
+        "is_first_login": True,
+        "stripe_customer_id": None,
+    }
 
 # ---------------------
 # Password Utilities
@@ -107,6 +185,10 @@ class CheckoutRequest(BaseModel):
     plan: str  # "pro_reasoning" or "pro_creative"
     origin_url: str
 
+class CreditPurchaseRequest(BaseModel):
+    pack_id: str  # "starter", "standard", "power"
+    origin_url: str
+
 # ---------------------
 # Brute Force Protection
 # ---------------------
@@ -156,9 +238,7 @@ async def register(req: RegisterRequest, response: Response):
         "password_hash": hash_password(req.password),
         "name": req.name or email.split("@")[0],
         "role": "free",
-        "daily_message_count": 0,
-        "last_message_date": None,
-        "stripe_customer_id": None,
+        **get_default_user_fields(),
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     result = await db.users.insert_one(user_doc)
@@ -202,11 +282,24 @@ async def logout(response: Response):
 @api_router.get("/auth/me")
 async def get_me(request: Request):
     user = await get_current_user(request)
+    role = user.get("role", "free")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    limits = TIER_LIMITS.get(role, TIER_LIMITS["free"])
+    
+    # Reset daily counts if date changed
+    msg_count = user.get("daily_message_count", 0) if user.get("last_message_date") == today else 0
+    img_count = user.get("daily_image_count", 0) if user.get("last_image_date") == today else 0
+    vid_count = user.get("daily_video_count", 0) if user.get("last_video_date") == today else 0
+    
     return {
         "id": user["_id"], "email": user["email"],
-        "name": user.get("name", ""), "role": user.get("role", "free"),
-        "daily_message_count": user.get("daily_message_count", 0),
-        "last_message_date": user.get("last_message_date")
+        "name": user.get("name", ""), "role": role,
+        "daily_message_count": msg_count,
+        "daily_image_count": img_count,
+        "daily_video_count": vid_count,
+        "video_credits": user.get("video_credits", 0),
+        "is_first_login": user.get("is_first_login", True),
+        "limits": limits,
     }
 
 @api_router.post("/auth/refresh")
@@ -233,32 +326,30 @@ async def refresh_token(request: Request, response: Response):
 # ---------------------
 # Chat Endpoints
 # ---------------------
-DAILY_FREE_LIMIT = 10
-
 PLACEHOLDER_RESPONSES = [
-    "I'm Impulse AI, your intelligent assistant. This is a placeholder response — AI integration coming soon!",
+    "I'm Impulse AI, your intelligent assistant. This is a placeholder response -- AI integration coming soon!",
     "Great question! Once AI is connected, I'll provide real insights here. For now, this is a demo response.",
     "Interesting thought. Impulse AI will process this with advanced reasoning once the AI engine is live.",
-    "I appreciate your message! This is a placeholder — the full AI experience is on its way.",
+    "I appreciate your message! This is a placeholder -- the full AI experience is on its way.",
     "That's a fascinating topic. Stay tuned for real AI-powered responses in the next update!",
 ]
-
-import random
 
 @api_router.post("/chat/send")
 async def send_message(req: ChatMessageRequest, request: Request):
     user = await get_current_user(request)
     user_id = user["_id"]
     role = user.get("role", "free")
+    limits = TIER_LIMITS.get(role, TIER_LIMITS["free"])
     
-    # Check daily limit for free users
+    # Check daily limit for message-limited tiers
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if role == "free":
+    daily_limit = limits["daily_messages"]
+    if daily_limit is not None:
         last_date = user.get("last_message_date")
         count = user.get("daily_message_count", 0)
         if last_date != today:
             count = 0
-        if count >= DAILY_FREE_LIMIT:
+        if count >= daily_limit:
             raise HTTPException(status_code=429, detail="Daily message limit reached. Upgrade to Pro for unlimited messages.")
         new_count = count + 1
         await db.users.update_one(
@@ -315,17 +406,13 @@ async def send_message(req: ChatMessageRequest, request: Request):
         "chat_id": chat_id,
         "user_message": {"id": user_msg_id, "role": "user", "content": req.content},
         "ai_message": {"id": ai_msg_id, "role": "assistant", "content": ai_content},
-        "daily_message_count": updated_user.get("daily_message_count", 0) if role == "free" else None,
-        "daily_limit": DAILY_FREE_LIMIT if role == "free" else None
+        "daily_message_count": updated_user.get("daily_message_count", 0) if daily_limit is not None else None,
+        "daily_limit": daily_limit
     }
 
 @api_router.get("/chat/list")
 async def list_chats(request: Request):
     user = await get_current_user(request)
-    chats = await db.chats.find(
-        {"user_id": user["_id"]}, {"_id": 0}
-    ).sort("updated_at", -1).to_list(100)
-    # We need the chat id - stored as a separate ObjectId
     chats_with_id = []
     raw_chats = await db.chats.find({"user_id": user["_id"]}).sort("updated_at", -1).to_list(100)
     for c in raw_chats:
@@ -453,7 +540,7 @@ async def create_checkout(req: CheckoutRequest, request: Request):
 async def get_checkout_status(session_id: str, request: Request):
     from emergentintegrations.payments.stripe.checkout import StripeCheckout
     
-    user = await get_current_user(request)
+    await get_current_user(request)  # auth check
     api_key = os.environ.get("STRIPE_API_KEY")
     
     host_url = str(request.base_url)
@@ -471,17 +558,34 @@ async def get_checkout_status(session_id: str, request: Request):
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
         
-        # If paid and not already processed, update user role
+        # If paid and not already processed
         if status.payment_status == "paid" and tx.get("payment_status") != "paid":
-            plan = tx.get("plan")
-            if plan in SUBSCRIPTION_PLANS:
-                new_role = SUBSCRIPTION_PLANS[plan]["role"]
+            tx_type = tx.get("type", "subscription")
+            if tx_type == "credit_purchase":
+                # Add credits to user
+                credits_to_add = tx.get("credits", 0)
                 await db.users.update_one(
                     {"_id": ObjectId(tx["user_id"])},
-                    {"$set": {"role": new_role}}
+                    {"$inc": {"video_credits": credits_to_add}}
                 )
-                update_data["role_updated"] = True
-                logger.info(f"Updated user {tx['user_id']} role to {new_role}")
+                update_data["credits_added"] = credits_to_add
+                logger.info(f"Added {credits_to_add} credits to user {tx['user_id']}")
+            else:
+                # Subscription upgrade
+                plan = tx.get("plan")
+                if plan in SUBSCRIPTION_PLANS:
+                    new_role = SUBSCRIPTION_PLANS[plan]["role"]
+                    update_fields = {"role": new_role}
+                    # Initialize credits for Creative Pro
+                    if new_role == "pro_creative":
+                        update_fields["video_credits"] = 100
+                        update_fields["credits_reset_date"] = datetime.now(timezone.utc).isoformat()
+                    await db.users.update_one(
+                        {"_id": ObjectId(tx["user_id"])},
+                        {"$set": update_fields}
+                    )
+                    update_data["role_updated"] = True
+                    logger.info(f"Updated user {tx['user_id']} role to {new_role}")
         
         await db.payment_transactions.update_one(
             {"session_id": session_id},
@@ -514,13 +618,25 @@ async def stripe_webhook(request: Request):
             session_id = webhook_response.session_id
             tx = await db.payment_transactions.find_one({"session_id": session_id})
             if tx and tx.get("payment_status") != "paid":
-                plan = tx.get("plan")
-                if plan in SUBSCRIPTION_PLANS:
-                    new_role = SUBSCRIPTION_PLANS[plan]["role"]
+                tx_type = tx.get("type", "subscription")
+                if tx_type == "credit_purchase":
+                    credits_to_add = tx.get("credits", 0)
                     await db.users.update_one(
                         {"_id": ObjectId(tx["user_id"])},
-                        {"$set": {"role": new_role}}
+                        {"$inc": {"video_credits": credits_to_add}}
                     )
+                else:
+                    plan = tx.get("plan")
+                    if plan in SUBSCRIPTION_PLANS:
+                        new_role = SUBSCRIPTION_PLANS[plan]["role"]
+                        update_fields = {"role": new_role}
+                        if new_role == "pro_creative":
+                            update_fields["video_credits"] = 100
+                            update_fields["credits_reset_date"] = datetime.now(timezone.utc).isoformat()
+                        await db.users.update_one(
+                            {"_id": ObjectId(tx["user_id"])},
+                            {"$set": update_fields}
+                        )
                 await db.payment_transactions.update_one(
                     {"session_id": session_id},
                     {"$set": {
@@ -536,22 +652,158 @@ async def stripe_webhook(request: Request):
         return {"status": "error", "detail": str(e)}
 
 # ---------------------
-# User Profile
+# User Profile & Usage
 # ---------------------
 @api_router.get("/user/usage")
 async def get_user_usage(request: Request):
     user = await get_current_user(request)
+    role = user.get("role", "free")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    limits = TIER_LIMITS.get(role, TIER_LIMITS["free"])
     
-    count = user.get("daily_message_count", 0)
-    last_date = user.get("last_message_date")
-    if last_date != today:
-        count = 0
+    msg_count = user.get("daily_message_count", 0) if user.get("last_message_date") == today else 0
+    img_count = user.get("daily_image_count", 0) if user.get("last_image_date") == today else 0
+    vid_count = user.get("daily_video_count", 0) if user.get("last_video_date") == today else 0
+    
+    # Monthly credit reset for Creative Pro
+    video_credits = user.get("video_credits", 0)
+    if role == "pro_creative":
+        reset_date = user.get("credits_reset_date")
+        now = datetime.now(timezone.utc)
+        if not reset_date or (now - datetime.fromisoformat(reset_date)).days >= 30:
+            video_credits = limits.get("monthly_credits", 100)
+            await db.users.update_one(
+                {"_id": ObjectId(user["_id"])},
+                {"$set": {"video_credits": video_credits, "credits_reset_date": now.isoformat()}}
+            )
     
     return {
-        "role": user.get("role", "free"),
-        "daily_message_count": count,
-        "daily_limit": DAILY_FREE_LIMIT if user.get("role", "free") == "free" else None
+        "role": role,
+        "daily_message_count": msg_count,
+        "daily_message_limit": limits["daily_messages"],
+        "daily_image_count": img_count,
+        "daily_image_limit": limits["daily_images"],
+        "daily_video_count": vid_count,
+        "daily_video_limit": limits["daily_videos"],
+        "video_credits": video_credits,
+        "max_video_duration": limits["max_video_duration"],
+        "video_quality": limits["video_quality"],
+        "watermark": limits["watermark"],
+        "uses_credits": limits["uses_credits"],
+    }
+
+# ---------------------
+# Credit Top-Up Store
+# ---------------------
+@api_router.get("/credits/packs")
+async def get_credit_packs(request: Request):
+    user = await get_current_user(request)
+    return {
+        "packs": [
+            {"id": k, "name": v["name"], "credits": v["credits"], "amount": v["amount"]}
+            for k, v in CREDIT_PACKS.items()
+        ],
+        "current_credits": user.get("video_credits", 0)
+    }
+
+@api_router.post("/credits/purchase")
+async def purchase_credits(req: CreditPurchaseRequest, request: Request):
+    from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
+    
+    user = await get_current_user(request)
+    role = user.get("role", "free")
+    
+    if role != "pro_creative" and role != "admin":
+        raise HTTPException(status_code=403, detail="Credit top-ups are only available for Creative Pro users.")
+    
+    if req.pack_id not in CREDIT_PACKS:
+        raise HTTPException(status_code=400, detail="Invalid credit pack")
+    
+    pack = CREDIT_PACKS[req.pack_id]
+    api_key = os.environ.get("STRIPE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Stripe not configured")
+    
+    origin_url = req.origin_url.rstrip("/")
+    success_url = f"{origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}&type=credits"
+    cancel_url = f"{origin_url}/credits"
+    
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url}api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
+    
+    checkout_request = CheckoutSessionRequest(
+        amount=pack["amount"],
+        currency="usd",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={
+            "user_id": user["_id"],
+            "type": "credit_purchase",
+            "pack_id": req.pack_id,
+            "credits": str(pack["credits"]),
+            "user_email": user["email"]
+        }
+    )
+    
+    session = await stripe_checkout.create_checkout_session(checkout_request)
+    
+    await db.payment_transactions.insert_one({
+        "session_id": session.session_id,
+        "user_id": user["_id"],
+        "email": user["email"],
+        "type": "credit_purchase",
+        "pack_id": req.pack_id,
+        "credits": pack["credits"],
+        "amount": pack["amount"],
+        "currency": "usd",
+        "payment_status": "initiated",
+        "status": "pending",
+        "metadata": {"pack_id": req.pack_id, "credits": str(pack["credits"])},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    return {"url": session.url, "session_id": session.session_id}
+
+# ---------------------
+# Admin Dashboard
+# ---------------------
+@api_router.get("/admin/dashboard")
+async def admin_dashboard(request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    total_users = await db.users.count_documents({})
+    free_users = await db.users.count_documents({"role": "free"})
+    reasoning_users = await db.users.count_documents({"role": "pro_reasoning"})
+    creative_users = await db.users.count_documents({"role": "pro_creative"})
+    
+    total_feedback = await db.feedback_logs.count_documents({})
+    thumbs_up = await db.feedback_logs.count_documents({"rating": "up"})
+    thumbs_down = await db.feedback_logs.count_documents({"rating": "down"})
+    
+    total_credit_purchases = await db.payment_transactions.count_documents({
+        "type": "credit_purchase", "payment_status": "paid"
+    })
+    credit_revenue_pipeline = [
+        {"$match": {"type": "credit_purchase", "payment_status": "paid"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]
+    credit_revenue_result = await db.payment_transactions.aggregate(credit_revenue_pipeline).to_list(1)
+    credit_revenue = credit_revenue_result[0]["total"] if credit_revenue_result else 0
+    
+    sub_revenue_pipeline = [
+        {"$match": {"type": {"$ne": "credit_purchase"}, "payment_status": "paid"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]
+    sub_revenue_result = await db.payment_transactions.aggregate(sub_revenue_pipeline).to_list(1)
+    sub_revenue = sub_revenue_result[0]["total"] if sub_revenue_result else 0
+    
+    return {
+        "users": {"total": total_users, "free": free_users, "pro_reasoning": reasoning_users, "pro_creative": creative_users},
+        "feedback": {"total": total_feedback, "thumbs_up": thumbs_up, "thumbs_down": thumbs_down},
+        "revenue": {"subscriptions": sub_revenue, "credit_purchases": credit_revenue, "total_credit_purchases": total_credit_purchases}
     }
 
 # ---------------------
@@ -576,24 +828,31 @@ async def startup():
             "email": admin_email,
             "password_hash": hash_password(admin_password),
             "name": "Admin",
-            "role": "free",
-            "daily_message_count": 0,
-            "last_message_date": None,
+            "role": "admin",
+            **get_default_user_fields(),
+            "is_first_login": False,
             "created_at": datetime.now(timezone.utc).isoformat()
         })
         logger.info(f"Admin user created: {admin_email}")
-    elif not verify_password(admin_password, existing["password_hash"]):
-        await db.users.update_one(
-            {"email": admin_email},
-            {"$set": {"password_hash": hash_password(admin_password)}}
-        )
-        logger.info(f"Admin password updated: {admin_email}")
+    else:
+        updates = {}
+        if existing.get("role") != "admin":
+            updates["role"] = "admin"
+        if not verify_password(admin_password, existing["password_hash"]):
+            updates["password_hash"] = hash_password(admin_password)
+        # Ensure new fields exist
+        for field, default in get_default_user_fields().items():
+            if field not in existing:
+                updates[field] = default
+        if updates:
+            await db.users.update_one({"email": admin_email}, {"$set": updates})
+            logger.info(f"Admin user updated: {admin_email}")
     
     # Write test credentials
     os.makedirs("/app/memory", exist_ok=True)
     with open("/app/memory/test_credentials.md", "w") as f:
         f.write("# Test Credentials\n\n")
-        f.write(f"## Admin\n- Email: {admin_email}\n- Password: {admin_password}\n- Role: free\n\n")
+        f.write(f"## Admin\n- Email: {admin_email}\n- Password: {admin_password}\n- Role: admin\n\n")
         f.write("## Test User\n- Email: testuser@impulseai.com\n- Password: test1234\n- Role: free (register via /api/auth/register)\n\n")
         f.write("## Auth Endpoints\n")
         f.write("- POST /api/auth/register\n- POST /api/auth/login\n- POST /api/auth/logout\n")
@@ -601,9 +860,12 @@ async def startup():
         f.write("## Chat Endpoints\n")
         f.write("- POST /api/chat/send\n- GET /api/chat/list\n- GET /api/chat/{chat_id}/messages\n")
         f.write("- DELETE /api/chat/{chat_id}\n\n")
+        f.write("## Usage & Credits\n")
+        f.write("- GET /api/user/usage\n- GET /api/credits/packs\n- POST /api/credits/purchase\n\n")
+        f.write("## Admin\n- GET /api/admin/dashboard\n\n")
         f.write("## Other Endpoints\n")
         f.write("- POST /api/feedback\n- POST /api/checkout/create\n")
-        f.write("- GET /api/checkout/status/{session_id}\n- GET /api/user/usage\n")
+        f.write("- GET /api/checkout/status/{session_id}\n")
 
 app.include_router(api_router)
 

@@ -18,7 +18,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [usage, setUsage] = useState({ daily_message_count: 0, daily_limit: 10, role: "free" });
+  const [usage, setUsage] = useState({ daily_message_count: 0, daily_message_limit: 20, role: "free" });
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -107,7 +107,7 @@ export default function ChatPage() {
       }
 
       // Update usage
-      if (data.daily_message_count !== null) {
+      if (data.daily_message_count !== null && data.daily_message_count !== undefined) {
         setUsage((prev) => ({ ...prev, daily_message_count: data.daily_message_count }));
       }
 
@@ -116,7 +116,7 @@ export default function ChatPage() {
       setMessages((prev) => prev.filter((m) => m.id !== "temp-user"));
       const detail = err.response?.data?.detail;
       if (typeof detail === "string" && detail.includes("Daily message limit")) {
-        setUsage((prev) => ({ ...prev, daily_message_count: prev.daily_limit || 10 }));
+        setUsage((prev) => ({ ...prev, daily_message_count: prev.daily_message_limit || 20 }));
       }
     } finally {
       setSending(false);
@@ -130,7 +130,7 @@ export default function ChatPage() {
     }
   };
 
-  const isLimitReached = usage.role === "free" && usage.daily_message_count >= (usage.daily_limit || 10);
+  const isLimitReached = usage.daily_message_limit !== null && usage.daily_message_limit !== undefined && usage.daily_message_count >= usage.daily_message_limit;
 
   return (
     <div className="h-screen bg-[#0a0a0a] flex overflow-hidden" data-testid="chat-page">
@@ -154,6 +154,8 @@ export default function ChatPage() {
           onDeleteChat={deleteChat}
           usage={usage}
           onNavigatePricing={() => navigate("/pricing")}
+          onNavigateCredits={() => navigate("/credits")}
+          onNavigateAdmin={() => navigate("/admin")}
           onClose={() => setSidebarOpen(false)}
         />
       </div>
@@ -175,9 +177,14 @@ export default function ChatPage() {
               {activeChatId ? "Active conversation" : "New conversation"}
             </span>
           </div>
-          {usage.role !== "free" && (
+          {usage.role !== "free" && usage.role !== "admin" && (
             <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-[#3b82f6]/10 text-[#3b82f6] border border-[#3b82f6]/20">
               {usage.role === "pro_reasoning" ? "Reasoning Pro" : "Creative Pro"}
+            </span>
+          )}
+          {usage.role === "admin" && (
+            <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              Admin
             </span>
           )}
         </div>
@@ -193,7 +200,7 @@ export default function ChatPage() {
                 Start a conversation
               </h2>
               <p className="text-[#52525b] text-sm leading-relaxed">
-                Send a message to begin. Impulse AI will respond with placeholder text — real AI integration coming soon.
+                Send a message to begin. Impulse AI is powered by Claude for intelligent conversations.
               </p>
             </div>
           ) : (

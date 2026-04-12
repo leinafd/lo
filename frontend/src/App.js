@@ -6,6 +6,8 @@ import RegisterPage from "@/pages/RegisterPage";
 import ChatPage from "@/pages/ChatPage";
 import PricingPage from "@/pages/PricingPage";
 import PaymentSuccessPage from "@/pages/PaymentSuccessPage";
+import CreditStorePage from "@/pages/CreditStorePage";
+import AdminDashboard from "@/pages/AdminDashboard";
 import "@/App.css";
 
 function App() {
@@ -18,6 +20,8 @@ function App() {
           <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
           <Route path="/pricing" element={<ProtectedRoute><PricingPage /></ProtectedRoute>} />
           <Route path="/payment/success" element={<ProtectedRoute><PaymentSuccessPage /></ProtectedRoute>} />
+          <Route path="/credits" element={<ProtectedRoute><CreditStorePage /></ProtectedRoute>} />
+          <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthProvider>

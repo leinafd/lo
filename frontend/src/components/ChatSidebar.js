@@ -2,12 +2,22 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus, MessageSquare, Trash2, Zap, LogOut, Crown, X } from "lucide-react";
+import { Plus, MessageSquare, Trash2, Zap, LogOut, Crown, X, Image, Video, Coins, Shield } from "lucide-react";
 
-export default function ChatSidebar({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, usage, onNavigatePricing, onClose }) {
+export default function ChatSidebar({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, usage, onNavigatePricing, onNavigateCredits, onNavigateAdmin, onClose }) {
   const { user, logout } = useAuth();
-  const isFree = usage.role === "free";
-  const usagePercent = isFree ? Math.min((usage.daily_message_count / (usage.daily_limit || 10)) * 100, 100) : 0;
+  const role = usage.role || "free";
+  const isFree = role === "free";
+  const isAdmin = role === "admin";
+
+  const msgLimit = usage.daily_message_limit;
+  const msgCount = usage.daily_message_count || 0;
+  const msgPercent = msgLimit ? Math.min((msgCount / msgLimit) * 100, 100) : 0;
+
+  const imgLimit = usage.daily_image_limit;
+  const imgCount = usage.daily_image_count || 0;
+  const vidLimit = usage.daily_video_limit;
+  const vidCount = usage.daily_video_count || 0;
 
   return (
     <div className="h-full bg-[#111111] border-r border-white/[0.06] flex flex-col" data-testid="chat-sidebar">
@@ -76,39 +86,112 @@ export default function ChatSidebar({ chats, activeChatId, onSelectChat, onNewCh
       </ScrollArea>
 
       {/* Usage & Plan */}
-      <div className="p-3 space-y-3 shrink-0 border-t border-white/[0.06]">
+      <div className="p-3 space-y-2 shrink-0 border-t border-white/[0.06]">
         {isFree ? (
-          <div className="p-3 rounded-xl bg-white/5 border border-white/[0.08]" data-testid="usage-counter">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-[#a1a1aa] uppercase tracking-[0.15em]">Daily usage</span>
-              <span className="text-xs text-[#fafafa] font-medium">
-                {usage.daily_message_count} of {usage.daily_limit || 10}
-              </span>
+          <div className="p-3 rounded-xl bg-white/5 border border-white/[0.08] space-y-3" data-testid="usage-counter">
+            {/* Messages */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] text-[#a1a1aa] uppercase tracking-[0.15em] flex items-center gap-1">
+                  <MessageSquare className="w-3 h-3" /> Messages
+                </span>
+                <span className="text-[10px] text-[#fafafa] font-medium">{msgCount}/{msgLimit}</span>
+              </div>
+              <Progress value={msgPercent} className="h-1 bg-white/10" data-testid="msg-progress" />
             </div>
-            <Progress
-              value={usagePercent}
-              className="h-1.5 bg-white/10"
-              data-testid="usage-progress-bar"
-            />
+            {/* Images */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] text-[#a1a1aa] uppercase tracking-[0.15em] flex items-center gap-1">
+                  <Image className="w-3 h-3" /> Images
+                </span>
+                <span className="text-[10px] text-[#fafafa] font-medium">{imgCount}/{imgLimit}</span>
+              </div>
+              <Progress value={imgLimit ? (imgCount / imgLimit) * 100 : 0} className="h-1 bg-white/10" />
+            </div>
+            {/* Videos */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] text-[#a1a1aa] uppercase tracking-[0.15em] flex items-center gap-1">
+                  <Video className="w-3 h-3" /> Videos
+                </span>
+                <span className="text-[10px] text-[#fafafa] font-medium">{vidCount}/{vidLimit}</span>
+              </div>
+              <Progress value={vidLimit ? (vidCount / vidLimit) * 100 : 0} className="h-1 bg-white/10" />
+            </div>
             <Button
               onClick={onNavigatePricing}
               size="sm"
-              className="w-full mt-3 h-8 bg-[#3b82f6] hover:bg-[#2563eb] text-white text-xs"
+              className="w-full h-7 bg-[#3b82f6] hover:bg-[#2563eb] text-white text-xs"
               data-testid="upgrade-button"
             >
               <Crown className="w-3 h-3 mr-1.5" />
               Upgrade to Pro
             </Button>
           </div>
-        ) : (
-          <div className="p-3 rounded-xl bg-[#3b82f6]/5 border border-[#3b82f6]/20" data-testid="pro-badge">
-            <div className="flex items-center gap-2">
-              <Crown className="w-4 h-4 text-[#3b82f6]" />
-              <span className="text-sm font-medium text-[#fafafa]">
-                {usage.role === "pro_reasoning" ? "Reasoning Pro" : "Creative Pro"}
-              </span>
+        ) : isAdmin ? (
+          <div className="space-y-2">
+            <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/20" data-testid="admin-badge">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-amber-400" />
+                <span className="text-sm font-medium text-[#fafafa]">Admin</span>
+              </div>
+              <p className="text-xs text-[#a1a1aa] mt-1">All limits bypassed</p>
             </div>
-            <p className="text-xs text-[#a1a1aa] mt-1">Unlimited messages</p>
+            <Button
+              onClick={onNavigateAdmin}
+              size="sm"
+              variant="outline"
+              className="w-full h-7 bg-white/5 border-white/10 hover:bg-white/10 text-white text-xs"
+              data-testid="admin-dashboard-button"
+            >
+              <Shield className="w-3 h-3 mr-1.5" />
+              Dashboard
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="p-3 rounded-xl bg-[#3b82f6]/5 border border-[#3b82f6]/20" data-testid="pro-badge">
+              <div className="flex items-center gap-2">
+                <Crown className="w-4 h-4 text-[#3b82f6]" />
+                <span className="text-sm font-medium text-[#fafafa]">
+                  {role === "pro_reasoning" ? "Reasoning Pro" : "Creative Pro"}
+                </span>
+              </div>
+              <p className="text-xs text-[#a1a1aa] mt-1">Unlimited messages</p>
+              {/* Show daily limits for Reasoning Pro */}
+              {role === "pro_reasoning" && (
+                <div className="mt-2 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-[#a1a1aa] flex items-center gap-1"><Image className="w-3 h-3" /> Images</span>
+                    <span className="text-[10px] text-[#fafafa]">{imgCount}/{imgLimit}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-[#a1a1aa] flex items-center gap-1"><Video className="w-3 h-3" /> Videos</span>
+                    <span className="text-[10px] text-[#fafafa]">{vidCount}/{vidLimit}</span>
+                  </div>
+                </div>
+              )}
+              {/* Show credits for Creative Pro */}
+              {role === "pro_creative" && (
+                <div className="mt-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-[#a1a1aa] flex items-center gap-1"><Coins className="w-3 h-3" /> Video Credits</span>
+                    <span className="text-[10px] text-[#fafafa] font-medium">{usage.video_credits || 0}</span>
+                  </div>
+                  <Button
+                    onClick={onNavigateCredits}
+                    size="sm"
+                    variant="outline"
+                    className="w-full mt-2 h-6 bg-white/5 border-white/10 hover:bg-white/10 text-white text-[10px]"
+                    data-testid="buy-credits-button"
+                  >
+                    <Coins className="w-3 h-3 mr-1" />
+                    Buy Credits
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

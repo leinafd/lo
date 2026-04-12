@@ -1,67 +1,56 @@
 # Impulse AI - Product Requirements Document
 
 ## Problem Statement
-Build a full-stack SaaS app called Impulse AI — a branded AI chat platform with auth, Stripe subscriptions, chat UI with usage limits, and feedback logging. No real AI integration yet.
+Full-stack SaaS AI chat platform with tiered subscriptions, credit system, AI chat (Claude), image generation (Nano Banana), and planned video/document/avatar features.
 
 ## Architecture
 - **Frontend**: React + Tailwind CSS + Shadcn UI (port 3000)
 - **Backend**: FastAPI (port 8001)
-- **Database**: MongoDB (users, chats, messages, feedback_logs, payment_transactions, login_attempts)
-- **Payments**: Stripe via emergentintegrations library
+- **Database**: MongoDB
+- **AI Chat**: Claude Sonnet (claude-4-sonnet-20250514) via emergentintegrations
+- **Image Gen**: Gemini Nano Banana (gemini-3-pro-image-preview) via emergentintegrations
+- **Payments**: Stripe via emergentintegrations
+- **Storage**: Emergent Object Storage for generated images
 - **Auth**: JWT + bcrypt with httpOnly cookies
 
-## User Personas
-1. **Free User**: 10 messages/day, usage counter visible, upgrade prompts
-2. **Pro Reasoning User**: Unlimited messages, $12/mo subscription
-3. **Pro Creative User**: Unlimited messages, $24/mo subscription
+## Tiers
+- Free: 20 msgs/day, 2 images/day, 1 video/day (5s, watermarked)
+- Reasoning Pro ($12/mo): Unlimited chat, 10 images/day, 3 videos/day (10s, SD+HD)
+- Creative Pro ($24/mo): Unlimited all, 100 monthly video credits, credit top-ups
+- Admin: All limits bypassed, admin dashboard
 
-## Core Requirements
-- Email/password auth (register, login, logout, token refresh)
-- Role-based access (free, pro_reasoning, pro_creative)
-- Daily message limit (10/day for free users)
-- Chat with placeholder AI responses
-- Thumbs up/down feedback logging
-- Stripe Checkout for subscription upgrades
-- Payment status polling on success page
-- Dark theme (#0a0a0a, #3b82f6 accent, Outfit+Manrope fonts)
+## What's Been Implemented (April 12, 2026)
+### Phase 1: Tier Limits, Credit System, Credit Top-Up Store
+- [x] Comprehensive TIER_LIMITS config for all tiers
+- [x] Daily message/image/video limits with per-tier enforcement
+- [x] Video credit system (duration-based: 1-5s=1cr, 6-10s=2cr, 11-15s=3cr, HD=2x)
+- [x] Credit top-up store (Starter 50/$5, Standard 120/$10, Power 300/$20)
+- [x] Admin role with all limits bypassed
+- [x] Admin dashboard (users, feedback, revenue stats)
+- [x] Updated pricing page with accurate feature lists
 
-## What's Been Implemented (April 11, 2026)
-- [x] JWT auth with bcrypt password hashing
-- [x] Brute force protection (5 attempts → 15 min lockout)
-- [x] Admin seeding on startup
-- [x] Chat system with placeholder responses
-- [x] Daily message limit enforcement
-- [x] Feedback logging (thumbs up/down)
-- [x] Stripe Checkout session creation and status polling
-- [x] Payment webhook handler
-- [x] Role upgrade on successful payment
-- [x] Split-screen login/register pages
-- [x] Chat page with sidebar, history, usage counter
-- [x] Pricing page with 3 tier cards
-- [x] Payment success page with status polling
-- [x] Mobile responsive sidebar
+### Phase 2: Claude Chat + Nano Banana Image Generation
+- [x] Claude Sonnet integration for chat (with conversation history)
+- [x] Nano Banana Pro image generation via Gemini API
+- [x] Object storage for generated images
+- [x] Image display in chat messages
+- [x] Image generation button in chat input
+- [x] Graceful fallback for API budget errors
+- [x] File serving endpoint with auth
 
 ## Prioritized Backlog
-### P0 (Critical - Next)
-- Integrate real AI API (OpenAI/Claude/etc)
-- Add password reset flow
-- Email verification on signup
+### P0 (Phase 3 - Next)
+- Video tab with mocked Seedance 2.0
+- Avatar system (upload face/body photos)
+- "Get To Know You" onboarding modal
 
-### P1 (Important)
-- Chat message streaming
-- Chat export functionality
-- User settings/profile page
-- Subscription management (cancel/change plan)
+### P1 (Phase 4)
+- Document creation/editing with rich text editor
+- Export to PDF and DOCX
+- Cross-chat memory system
 
-### P2 (Nice to have)
-- Chat search
-- Message history pagination
-- Dark/light theme toggle
-- Team collaboration features
+### P2 (Future)
+- Real Seedance 2.0 integration
+- Chat streaming
+- Team collaboration
 - API access for Pro users
-
-## Next Tasks
-1. Integrate AI API (GPT/Claude) for real chat responses
-2. Add email verification flow
-3. Build user settings page
-4. Add subscription management (portal/cancel)

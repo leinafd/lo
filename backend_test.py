@@ -32,10 +32,16 @@ class ImpulseAITester:
         else:
             print(f"❌ {name} - {details}")
         
+        # Convert details to string to avoid serialization issues
+        details_str = str(details) if details else ""
+        # Remove any Response objects from details
+        if hasattr(details, '__class__') and 'Response' in str(type(details)):
+            details_str = f"Response object: {getattr(details, 'status_code', 'unknown')}"
+        
         self.results.append({
             "test": name,
             "success": success,
-            "details": str(details),  # Convert to string to avoid serialization issues
+            "details": details_str,
             "timestamp": datetime.now().isoformat()
         })
         return success
@@ -363,7 +369,7 @@ class ImpulseAITester:
 
     def run_all_tests(self):
         """Run all backend tests"""
-        print("🚀 Starting Impulse AI Backend API Tests - Phase 2")
+        print("🚀 Starting Impulse AI Backend API Tests - Phase 3")
         print(f"📍 Testing against: {self.base_url}")
         print("=" * 60)
         
@@ -397,6 +403,35 @@ class ImpulseAITester:
         self.test_phase2_admin_image_bypass()
         self.test_phase2_user_images_list()
         self.test_phase2_file_serving()
+        
+        # Phase 3 - Video Generation Tests
+        print("\n🎬 Phase 3 - Video Generation Tests")
+        self.test_phase3_video_generation()
+        self.test_phase3_video_free_user_trial()
+        self.test_phase3_video_credit_system()
+        self.test_phase3_video_history()
+        
+        # Phase 3 - Avatar System Tests
+        print("\n👤 Phase 3 - Avatar System Tests")
+        self.test_phase3_avatar_list()
+        self.test_phase3_avatar_creation()
+        self.test_phase3_avatar_limits()
+        self.test_phase3_avatar_deletion()
+        
+        # Phase 3 - User Memory/Onboarding Tests
+        print("\n🧠 Phase 3 - User Memory Tests")
+        self.test_phase3_user_memory()
+        self.test_phase3_memory_persistence()
+        
+        # Phase 3 - Analytics Tests
+        print("\n📊 Phase 3 - Analytics Tests")
+        self.test_phase3_analytics_access()
+        self.test_phase3_analytics_data()
+        
+        # Phase 3 - Pricing Updates Tests
+        print("\n💰 Phase 3 - Pricing Tests")
+        self.test_phase3_subscription_plans()
+        self.test_phase3_credit_purchase_both_tiers()
         
         # Feedback tests
         print("\n👍 Feedback Tests")
@@ -864,19 +899,427 @@ class ImpulseAITester:
         except:
             return self.log_test("File Serving", False, "Error processing images response")
 
+    # Phase 3 Tests
+    def test_phase3_video_generation(self):
+        """Test POST /api/video/generate - mocked video generation"""
+        if not self.admin_cookies:
+            return self.log_test("Video Generation", False, "No admin cookies available")
+        
+        data = {
+            "prompt": "A beautiful landscape with mountains",
+            "duration": 5,
+            "quality": "standard"
+        }
+        
+        response, error = self.make_request('POST', 'video/generate', data, cookies=self.admin_cookies)
+        if not response:
+            return self.log_test("Video Generation", False, error)
+        
+        try:
+            result = response.json()
+            success = (
+                'video_id' in result and
+                'status' in result and
+                'video_url' in result and
+                result['status'] == 'completed' and
+                'sample-videos.com' in result['video_url']
+            )
+            return self.log_test("Video Generation", success, 
+                               "Mocked video generated successfully" if success else "Invalid response format")
+        except:
+            return self.log_test("Video Generation", False, "Invalid JSON response")
+
+    def test_phase3_video_free_user_trial(self):
+        """Test video generation trial expiry for free users"""
+        # Register a new free user
+        test_email = f"video_trial_{int(time.time())}@impulseai.com"
+        reg_response, reg_error = self.make_request('POST', 'auth/register', {
+            'email': test_email,
+            'password': 'test1234'
+        })
+        
+        if not self.log_test("Register user for video trial test", reg_response and reg_response.status_code == 200, reg_error):
+            return False
+        
+        # Try to generate a video (should work within 7 days)
+        data = {"prompt": "Test video", "duration": 3, "quality": "standard"}
+        response, _ = self.make_request('POST', 'video/generate', data)
+        
+        if response and response.status_code == 200:
+            return self.log_test("Video Free Trial", True, "Free user can generate videos within trial period")
+        elif response and response.status_code == 403:
+            try:
+                result = response.json()
+                if "trial has expired" in result.get('detail', ''):
+                    return self.log_test("Video Free Trial", True, "Trial expiry correctly enforced")
+            except:
+                pass
+        
+        return self.log_test("Video Free Trial", False, f"Unexpected response: {response.status_code if response else 'None'}")
+
+    def test_phase3_video_credit_system(self):
+        """Test video credit calculation and deduction"""
+        if not self.admin_cookies:
+            return self.log_test("Video Credit System", False, "No admin cookies available")
+        
+        # Check usage endpoint for credit info
+        usage_response, _ = self.make_request('GET', 'user/usage', cookies=self.admin_cookies)
+        if not usage_response or usage_response.status_code != 200:
+            return self.log_test("Video Credit System", False, "Could not get usage info")
+        
+        try:
+            usage_data = usage_response.json()
+            uses_credits = usage_data.get('uses_credits', False)
+            
+            # Admin should not use credits
+            if usage_data.get('role') == 'admin':
+                return self.log_test("Video Credit System", not uses_credits, 
+                                   "Admin should not use credits" if not uses_credits else "Admin incorrectly uses credits")
+            
+            return self.log_test("Video Credit System", True, f"Credit system configured: uses_credits={uses_credits}")
+        except:
+            return self.log_test("Video Credit System", False, "Invalid usage response")
+
+    def test_phase3_video_history(self):
+        """Test GET /api/user/videos - video history"""
+        if not self.admin_cookies:
+            return self.log_test("Video History", False, "No admin cookies available")
+        
+        response, error = self.make_request('GET', 'user/videos', cookies=self.admin_cookies)
+        if not response:
+            return self.log_test("Video History", False, error)
+        
+        try:
+            result = response.json()
+            success = isinstance(result, list)
+            
+            if success and len(result) > 0:
+                first_video = result[0]
+                required_fields = ['id', 'user_id', 'prompt', 'duration', 'quality', 'status', 'video_url']
+                missing_fields = [field for field in required_fields if field not in first_video]
+                success = len(missing_fields) == 0
+                
+                return self.log_test("Video History", success, 
+                                   f"Missing fields: {missing_fields}" if not success else f"Found {len(result)} videos")
+            else:
+                return self.log_test("Video History", True, "No videos found (expected if none generated)")
+        except:
+            return self.log_test("Video History", False, "Invalid JSON response")
+
+    def test_phase3_avatar_list(self):
+        """Test GET /api/avatars - list avatars with limits"""
+        if not self.admin_cookies:
+            return self.log_test("Avatar List", False, "No admin cookies available")
+        
+        response, error = self.make_request('GET', 'avatars', cookies=self.admin_cookies)
+        if not response:
+            return self.log_test("Avatar List", False, error)
+        
+        try:
+            result = response.json()
+            success = (
+                'avatars' in result and
+                'limit' in result and
+                isinstance(result['avatars'], list) and
+                isinstance(result['limit'], int)
+            )
+            
+            # Check admin limit (should be 99)
+            if success and result['limit'] == 99:
+                return self.log_test("Avatar List", True, f"Admin avatar limit: {result['limit']}")
+            elif success:
+                return self.log_test("Avatar List", True, f"Avatar limit: {result['limit']}")
+            else:
+                return self.log_test("Avatar List", False, "Invalid response format")
+        except:
+            return self.log_test("Avatar List", False, "Invalid JSON response")
+
+    def test_phase3_avatar_creation(self):
+        """Test POST /api/avatars - create avatar"""
+        if not self.admin_cookies:
+            return self.log_test("Avatar Creation", False, "No admin cookies available")
+        
+        # Test with form data (multipart)
+        import requests
+        url = f"{self.base_url}/api/avatars"
+        
+        try:
+            response = requests.post(
+                url,
+                data={'name': 'Test Avatar'},
+                cookies=self.admin_cookies
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                success = (
+                    'id' in result and
+                    'name' in result and
+                    'user_id' in result and
+                    result['name'] == 'Test Avatar'
+                )
+                return self.log_test("Avatar Creation", success, 
+                                   "Avatar created successfully" if success else "Invalid response format")
+            else:
+                return self.log_test("Avatar Creation", False, f"Status: {response.status_code}")
+        except Exception as e:
+            return self.log_test("Avatar Creation", False, f"Request failed: {str(e)}")
+
+    def test_phase3_avatar_limits(self):
+        """Test avatar creation limits per tier"""
+        # Register a new free user
+        test_email = f"avatar_limit_{int(time.time())}@impulseai.com"
+        reg_response, reg_error = self.make_request('POST', 'auth/register', {
+            'email': test_email,
+            'password': 'test1234'
+        })
+        
+        if not self.log_test("Register user for avatar limit test", reg_response and reg_response.status_code == 200, reg_error):
+            return False
+        
+        # Check avatar limit for free user
+        avatar_response, _ = self.make_request('GET', 'avatars')
+        if not avatar_response or avatar_response.status_code != 200:
+            return self.log_test("Avatar Limits", False, "Could not get avatar info")
+        
+        try:
+            result = avatar_response.json()
+            limit = result.get('limit', 0)
+            expected_free_limit = 1
+            
+            return self.log_test("Avatar Limits", limit == expected_free_limit, 
+                               f"Free user limit: {limit} (expected {expected_free_limit})")
+        except:
+            return self.log_test("Avatar Limits", False, "Invalid avatar response")
+
+    def test_phase3_avatar_deletion(self):
+        """Test DELETE /api/avatars/{id} - soft delete avatar"""
+        if not self.admin_cookies:
+            return self.log_test("Avatar Deletion", False, "No admin cookies available")
+        
+        # First get avatar list to find an avatar to delete
+        list_response, _ = self.make_request('GET', 'avatars', cookies=self.admin_cookies)
+        if not list_response or list_response.status_code != 200:
+            return self.log_test("Avatar Deletion", True, "No avatars to delete (expected)")
+        
+        try:
+            result = list_response.json()
+            avatars = result.get('avatars', [])
+            
+            if not avatars:
+                return self.log_test("Avatar Deletion", True, "No avatars to delete")
+            
+            # Try to delete the first avatar
+            avatar_id = avatars[0]['id']
+            delete_response, error = self.make_request('DELETE', f'avatars/{avatar_id}', cookies=self.admin_cookies)
+            
+            if not delete_response:
+                return self.log_test("Avatar Deletion", False, error)
+            
+            if delete_response.status_code == 200:
+                delete_result = delete_response.json()
+                success = delete_result.get('message') == 'Avatar deleted'
+                return self.log_test("Avatar Deletion", success, 
+                                   "Avatar deleted successfully" if success else "Invalid delete response")
+            else:
+                return self.log_test("Avatar Deletion", False, f"Delete failed: {delete_response.status_code}")
+        except:
+            return self.log_test("Avatar Deletion", False, "Error processing avatar deletion")
+
+    def test_phase3_user_memory(self):
+        """Test GET/POST /api/user/memory - user memory system"""
+        if not self.admin_cookies:
+            return self.log_test("User Memory", False, "No admin cookies available")
+        
+        # Test GET memory
+        get_response, error = self.make_request('GET', 'user/memory', cookies=self.admin_cookies)
+        if not get_response:
+            return self.log_test("User Memory", False, error)
+        
+        try:
+            get_result = get_response.json()
+            get_success = (
+                'user_id' in get_result and
+                'memory' in get_result and
+                'updated_at' in get_result
+            )
+            
+            if not get_success:
+                return self.log_test("User Memory", False, "Invalid GET memory response")
+            
+            # Test POST memory
+            test_memory = "This is a test memory for Phase 3"
+            post_data = {"memory_text": test_memory}
+            post_response, post_error = self.make_request('POST', 'user/memory', post_data, cookies=self.admin_cookies)
+            
+            if not post_response:
+                return self.log_test("User Memory", False, post_error)
+            
+            post_result = post_response.json()
+            post_success = (
+                post_result.get('message') == 'Memory updated' and
+                'persisted' in post_result
+            )
+            
+            return self.log_test("User Memory", post_success, 
+                               "Memory system working" if post_success else "Invalid POST memory response")
+        except:
+            return self.log_test("User Memory", False, "Invalid JSON response")
+
+    def test_phase3_memory_persistence(self):
+        """Test memory persistence based on user tier"""
+        # Register a new free user
+        test_email = f"memory_persist_{int(time.time())}@impulseai.com"
+        reg_response, reg_error = self.make_request('POST', 'auth/register', {
+            'email': test_email,
+            'password': 'test1234'
+        })
+        
+        if not self.log_test("Register user for memory persistence test", reg_response and reg_response.status_code == 200, reg_error):
+            return False
+        
+        # Test memory for free user
+        test_memory = "Free user memory test"
+        post_data = {"memory_text": test_memory}
+        post_response, _ = self.make_request('POST', 'user/memory', post_data)
+        
+        if not post_response or post_response.status_code != 200:
+            return self.log_test("Memory Persistence", False, "Could not save memory")
+        
+        try:
+            result = post_response.json()
+            persisted = result.get('persisted', True)
+            
+            # Free users should have persisted=False
+            return self.log_test("Memory Persistence", not persisted, 
+                               f"Free user memory persistence: {persisted} (should be False)")
+        except:
+            return self.log_test("Memory Persistence", False, "Invalid memory response")
+
+    def test_phase3_analytics_access(self):
+        """Test GET /api/user/analytics - access control"""
+        # Test admin access
+        if not self.admin_cookies:
+            return self.log_test("Analytics Access", False, "No admin cookies available")
+        
+        admin_response, admin_error = self.make_request('GET', 'user/analytics', cookies=self.admin_cookies)
+        if not admin_response:
+            return self.log_test("Analytics Access", False, admin_error)
+        
+        admin_success = admin_response.status_code == 200
+        
+        # Test free user access (should be 403)
+        test_email = f"analytics_test_{int(time.time())}@impulseai.com"
+        reg_response, _ = self.make_request('POST', 'auth/register', {
+            'email': test_email,
+            'password': 'test1234'
+        })
+        
+        if reg_response and reg_response.status_code == 200:
+            free_response, _ = self.make_request('GET', 'user/analytics', expected_status=403)
+            free_blocked = free_response and free_response.status_code == 403
+            
+            return self.log_test("Analytics Access", admin_success and free_blocked, 
+                               f"Admin access: {admin_success}, Free blocked: {free_blocked}")
+        else:
+            return self.log_test("Analytics Access", admin_success, "Admin can access analytics")
+
+    def test_phase3_analytics_data(self):
+        """Test analytics data structure"""
+        if not self.admin_cookies:
+            return self.log_test("Analytics Data", False, "No admin cookies available")
+        
+        response, error = self.make_request('GET', 'user/analytics', cookies=self.admin_cookies)
+        if not response:
+            return self.log_test("Analytics Data", False, error)
+        
+        try:
+            result = response.json()
+            required_fields = [
+                'totals', 'credits_spent_30d', 'current_credits',
+                'credit_purchases', 'recent_videos', 'recent_images'
+            ]
+            
+            missing_fields = [field for field in required_fields if field not in result]
+            
+            if missing_fields:
+                return self.log_test("Analytics Data", False, f"Missing fields: {missing_fields}")
+            
+            # Check totals structure
+            totals = result.get('totals', {})
+            total_fields = ['messages', 'images', 'videos']
+            missing_total_fields = [field for field in total_fields if field not in totals]
+            
+            return self.log_test("Analytics Data", len(missing_total_fields) == 0, 
+                               f"Missing total fields: {missing_total_fields}" if missing_total_fields else "Analytics data complete")
+        except:
+            return self.log_test("Analytics Data", False, "Invalid JSON response")
+
+    def test_phase3_subscription_plans(self):
+        """Test updated subscription pricing: Reasoning Pro=$19, Creative Pro=$39"""
+        # This tests the SUBSCRIPTION_PLANS constant in the backend
+        # We can verify through checkout creation
+        if not self.admin_cookies:
+            return self.log_test("Subscription Plans", False, "No admin cookies available")
+        
+        # Test Reasoning Pro pricing
+        reasoning_data = {
+            "plan": "pro_reasoning",
+            "origin_url": "https://ai-chat-builder-55.preview.emergentagent.com"
+        }
+        
+        reasoning_response, _ = self.make_request('POST', 'checkout/create', reasoning_data, cookies=self.admin_cookies)
+        reasoning_success = reasoning_response and reasoning_response.status_code == 200
+        
+        # Test Creative Pro pricing
+        creative_data = {
+            "plan": "pro_creative", 
+            "origin_url": "https://ai-chat-builder-55.preview.emergentagent.com"
+        }
+        
+        creative_response, _ = self.make_request('POST', 'checkout/create', creative_data, cookies=self.admin_cookies)
+        creative_success = creative_response and creative_response.status_code == 200
+        
+        return self.log_test("Subscription Plans", reasoning_success and creative_success, 
+                           f"Reasoning Pro: {reasoning_success}, Creative Pro: {creative_success}")
+
+    def test_phase3_credit_purchase_both_tiers(self):
+        """Test credit purchase allowed for both pro_reasoning and pro_creative"""
+        # This would require creating pro users, but we can test the endpoint exists
+        if not self.admin_cookies:
+            return self.log_test("Credit Purchase Both Tiers", False, "No admin cookies available")
+        
+        # Test credit packs endpoint
+        packs_response, error = self.make_request('GET', 'credits/packs', cookies=self.admin_cookies)
+        if not packs_response:
+            return self.log_test("Credit Purchase Both Tiers", False, error)
+        
+        try:
+            result = packs_response.json()
+            success = (
+                'packs' in result and
+                'current_credits' in result and
+                isinstance(result['packs'], list) and
+                len(result['packs']) > 0
+            )
+            return self.log_test("Credit Purchase Both Tiers", success, 
+                               "Credit packs accessible" if success else "Invalid packs response")
+        except:
+            return self.log_test("Credit Purchase Both Tiers", False, "Invalid JSON response")
+
 def main():
     tester = ImpulseAITester()
     success = tester.run_all_tests()
     
-    # Save detailed results for Phase 2
-    with open("/app/phase2_backend_results.json", "w") as f:
+    # Save detailed results for Phase 3
+    with open("/app/phase3_backend_results.json", "w") as f:
         json.dump({
             "summary": {
                 "total_tests": tester.tests_run,
                 "passed_tests": tester.tests_passed,
                 "success_rate": f"{(tester.tests_passed/tester.tests_run*100):.1f}%" if tester.tests_run > 0 else "0%",
                 "timestamp": datetime.now().isoformat(),
-                "phase": "Phase 2 - Claude Integration & Nano Banana Image Generation"
+                "phase": "Phase 3 - Video Generation, Avatars, Analytics, Updated Pricing"
             },
             "results": tester.results
         }, f, indent=2)

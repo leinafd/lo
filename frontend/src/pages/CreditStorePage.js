@@ -46,7 +46,7 @@ export default function CreditStorePage() {
     }
   };
 
-  const isAllowed = user?.role === "pro_creative" || user?.role === "admin";
+  const isAllowed = user?.role === "pro_creative" || user?.role === "pro_reasoning" || user?.role === "admin";
 
   return (
     <div className="min-h-screen bg-[#0a0a0a]" data-testid="credit-store-page">
@@ -90,10 +90,10 @@ export default function CreditStorePage() {
           <div className="text-center p-8 rounded-xl bg-[#111111] border border-white/[0.08]" data-testid="credits-locked">
             <Coins className="w-10 h-10 text-[#52525b] mx-auto mb-4" />
             <h3 className="text-lg font-semibold mb-2" style={{ fontFamily: "'Outfit', sans-serif" }}>
-              Creative Pro Required
+              Pro Subscription Required
             </h3>
             <p className="text-sm text-[#a1a1aa] mb-6">
-              Credit top-ups are only available for Creative Pro subscribers.
+              Credit top-ups are available for Reasoning Pro and Creative Pro subscribers.
             </p>
             <Button
               onClick={() => navigate("/pricing")}

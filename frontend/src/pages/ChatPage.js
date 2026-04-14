@@ -4,6 +4,7 @@ import axios from "axios";
 import { useAuth } from "@/contexts/AuthContext";
 import ChatSidebar from "@/components/ChatSidebar";
 import ChatMessage from "@/components/ChatMessage";
+import OnboardingModal from "@/components/OnboardingModal";
 import { Button } from "@/components/ui/button";
 import { Send, Loader2, Plus, Menu, X, Image } from "lucide-react";
 
@@ -20,6 +21,7 @@ export default function ChatPage() {
   const [generatingImage, setGeneratingImage] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [usage, setUsage] = useState({ daily_message_count: 0, daily_message_limit: 20, role: "free" });
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -49,6 +51,13 @@ export default function ChatPage() {
     fetchChats();
     fetchUsage();
   }, [fetchChats, fetchUsage]);
+
+  // Show onboarding for first-time users
+  useEffect(() => {
+    if (user && user.is_first_login) {
+      setShowOnboarding(true);
+    }
+  }, [user]);
 
   const loadChat = async (chatId) => {
     setActiveChatId(chatId);
@@ -173,6 +182,7 @@ export default function ChatPage() {
 
   return (
     <div className="h-screen bg-[#0a0a0a] flex overflow-hidden" data-testid="chat-page">
+      {showOnboarding && <OnboardingModal onClose={() => setShowOnboarding(false)} />}
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/60 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
@@ -195,6 +205,9 @@ export default function ChatPage() {
           onNavigatePricing={() => navigate("/pricing")}
           onNavigateCredits={() => navigate("/credits")}
           onNavigateAdmin={() => navigate("/admin")}
+          onNavigateVideos={() => navigate("/videos")}
+          onNavigateAvatars={() => navigate("/avatars")}
+          onNavigateAnalytics={() => navigate("/analytics")}
           onClose={() => setSidebarOpen(false)}
         />
       </div>

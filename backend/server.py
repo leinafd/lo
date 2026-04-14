@@ -54,25 +54,27 @@ TIER_LIMITS = {
         "video_quality": ["standard"],
         "watermark": True,
         "uses_credits": False,
+        "video_trial_days": 7,
     },
     "pro_reasoning": {
         "daily_messages": None,  # unlimited
         "daily_images": 10,
-        "daily_videos": 3,
+        "daily_videos": None,  # credit-based
         "max_video_duration": 10,
         "video_quality": ["standard", "hd"],
         "watermark": False,
-        "uses_credits": False,
+        "uses_credits": True,
+        "monthly_credits": 20,
     },
     "pro_creative": {
         "daily_messages": None,  # unlimited
         "daily_images": None,  # unlimited
-        "daily_videos": None,  # unlimited (credit-based)
+        "daily_videos": None,  # credit-based
         "max_video_duration": 15,
         "video_quality": ["standard", "hd"],
         "watermark": False,
         "uses_credits": True,
-        "monthly_credits": 100,
+        "monthly_credits": 50,
     },
     "admin": {
         "daily_messages": None,
@@ -654,6 +656,245 @@ async def list_user_images(request: Request):
     return images
 
 # ---------------------
+# Video Generation (Mocked Seedance 2.0)
+# ---------------------
+class VideoGenRequest(BaseModel):
+    prompt: str
+    duration: int = 5
+    quality: str = "standard"
+
+@api_router.post("/video/generate")
+async def generate_video(req: VideoGenRequest, request: Request):
+    user = await get_current_user(request)
+    user_id = user["_id"]
+    role = user.get("role", "free")
+    limits = TIER_LIMITS.get(role, TIER_LIMITS["free"])
+    
+    # Validate duration
+    if req.duration < 1 or req.duration > limits["max_video_duration"]:
+        raise HTTPException(status_code=400, detail=f"Duration must be 1-{limits['max_video_duration']} seconds for your plan.")
+    
+    # Validate quality
+    if req.quality not in limits["video_quality"]:
+        raise HTTPException(status_code=400, detail=f"Quality '{req.quality}' not available on your plan.")
+    
+    # Free user: check video trial expiry
+    if role == "free":
+        created_at = user.get("created_at")
+        if created_at:
+            days_since = (datetime.now(timezone.utc) - datetime.fromisoformat(created_at)).days
+            if days_since > 7:
+                raise HTTPException(status_code=403, detail="Free video trial has expired. Upgrade to Pro to continue generating videos.")
+        
+        # Check daily limit
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        vid_count = user.get("daily_video_count", 0) if user.get("last_video_date") == today else 0
+        if vid_count >= limits["daily_videos"]:
+            raise HTTPException(status_code=429, detail="Daily video limit reached.")
+        await db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"daily_video_count": vid_count + 1, "last_video_date": today}}
+        )
+    elif role != "admin":
+        # Pro tiers: check credits
+        credits_needed = calculate_video_credits(req.duration, req.quality)
+        current_credits = user.get("video_credits", 0)
+        if current_credits < credits_needed:
+            raise HTTPException(status_code=402, detail=f"Not enough credits. Need {credits_needed}, have {current_credits}. Purchase more credits.")
+        await db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$inc": {"video_credits": -credits_needed}}
+        )
+    
+    # Mocked video generation
+    video_id = str(uuid.uuid4())
+    await db.generated_videos.insert_one({
+        "id": video_id,
+        "user_id": user_id,
+        "prompt": req.prompt,
+        "duration": req.duration,
+        "quality": req.quality,
+        "status": "completed",
+        "watermark": limits["watermark"],
+        "video_url": "https://sample-videos.com/video321/mp4/720/big_buck_bunny_720p_1mb.mp4",
+        "thumbnail_url": None,
+        "credits_used": calculate_video_credits(req.duration, req.quality) if limits["uses_credits"] else 0,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    updated = await db.users.find_one({"_id": ObjectId(user_id)}, {"_id": 0, "video_credits": 1})
+    
+    return {
+        "video_id": video_id,
+        "status": "completed",
+        "video_url": "https://sample-videos.com/video321/mp4/720/big_buck_bunny_720p_1mb.mp4",
+        "watermark": limits["watermark"],
+        "credits_used": calculate_video_credits(req.duration, req.quality) if limits["uses_credits"] else 0,
+        "remaining_credits": updated.get("video_credits", 0) if limits["uses_credits"] else None,
+    }
+
+@api_router.get("/user/videos")
+async def list_user_videos(request: Request):
+    user = await get_current_user(request)
+    videos = await db.generated_videos.find(
+        {"user_id": user["_id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    return videos
+
+# ---------------------
+# Avatar System
+# ---------------------
+AVATAR_LIMITS = {"free": 1, "pro_reasoning": 2, "pro_creative": 5, "admin": 99}
+
+class AvatarCreateRequest(BaseModel):
+    name: str
+
+@api_router.get("/avatars")
+async def list_avatars(request: Request):
+    user = await get_current_user(request)
+    avatars = await db.avatars.find(
+        {"user_id": user["_id"], "is_deleted": {"$ne": True}}, {"_id": 0}
+    ).to_list(20)
+    limit = AVATAR_LIMITS.get(user.get("role", "free"), 1)
+    return {"avatars": avatars, "limit": limit}
+
+@api_router.post("/avatars")
+async def create_avatar(request: Request, name: str = "", face_photo: UploadFile = File(None), body_photo: UploadFile = File(None)):
+    user = await get_current_user(request)
+    user_id = user["_id"]
+    role = user.get("role", "free")
+    limit = AVATAR_LIMITS.get(role, 1)
+    
+    count = await db.avatars.count_documents({"user_id": user_id, "is_deleted": {"$ne": True}})
+    if count >= limit:
+        raise HTTPException(status_code=403, detail=f"Avatar limit reached ({limit}). Upgrade to add more.")
+    
+    avatar_id = str(uuid.uuid4())
+    avatar_doc = {
+        "id": avatar_id,
+        "user_id": user_id,
+        "name": name or f"Avatar {count + 1}",
+        "face_path": None,
+        "body_path": None,
+        "is_deleted": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    if face_photo:
+        face_data = await face_photo.read()
+        ext = face_photo.filename.split(".")[-1] if "." in face_photo.filename else "jpg"
+        face_path = f"{APP_NAME}/avatars/{user_id}/{avatar_id}_face.{ext}"
+        put_object(face_path, face_data, face_photo.content_type or "image/jpeg")
+        avatar_doc["face_path"] = face_path
+    
+    if body_photo:
+        body_data = await body_photo.read()
+        ext = body_photo.filename.split(".")[-1] if "." in body_photo.filename else "jpg"
+        body_path = f"{APP_NAME}/avatars/{user_id}/{avatar_id}_body.{ext}"
+        put_object(body_path, body_data, body_photo.content_type or "image/jpeg")
+        avatar_doc["body_path"] = body_path
+    
+    await db.avatars.insert_one(avatar_doc)
+    return avatar_doc
+
+@api_router.delete("/avatars/{avatar_id}")
+async def delete_avatar(avatar_id: str, request: Request):
+    user = await get_current_user(request)
+    result = await db.avatars.update_one(
+        {"id": avatar_id, "user_id": user["_id"]},
+        {"$set": {"is_deleted": True}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Avatar not found")
+    return {"message": "Avatar deleted"}
+
+# ---------------------
+# User Memory / Onboarding
+# ---------------------
+class MemoryUpdateRequest(BaseModel):
+    memory_text: str
+
+@api_router.get("/user/memory")
+async def get_user_memory(request: Request):
+    user = await get_current_user(request)
+    memory = await db.user_memory.find_one({"user_id": user["_id"]}, {"_id": 0})
+    return memory or {"user_id": user["_id"], "memory": "", "updated_at": None}
+
+@api_router.post("/user/memory")
+async def update_user_memory(req: MemoryUpdateRequest, request: Request):
+    user = await get_current_user(request)
+    role = user.get("role", "free")
+    
+    await db.user_memory.update_one(
+        {"user_id": user["_id"]},
+        {"$set": {
+            "user_id": user["_id"],
+            "memory": req.memory_text,
+            "persisted": role != "free",
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }},
+        upsert=True
+    )
+    
+    # Mark first login as done
+    await db.users.update_one(
+        {"_id": ObjectId(user["_id"])},
+        {"$set": {"is_first_login": False}}
+    )
+    
+    return {"message": "Memory updated", "persisted": role != "free"}
+
+# ---------------------
+# Usage Analytics (Pro users)
+# ---------------------
+@api_router.get("/user/analytics")
+async def get_user_analytics(request: Request):
+    user = await get_current_user(request)
+    user_id = user["_id"]
+    role = user.get("role", "free")
+    
+    if role == "free":
+        raise HTTPException(status_code=403, detail="Analytics available for Pro users only.")
+    
+    # Count generations
+    total_messages = await db.messages.count_documents({"user_id": user_id, "role": "user"})
+    total_images = await db.generated_images.count_documents({"user_id": user_id})
+    total_videos = await db.generated_videos.count_documents({"user_id": user_id})
+    
+    # Credit history (last 30 days)
+    thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    credit_purchases = await db.payment_transactions.find(
+        {"user_id": user_id, "type": "credit_purchase", "payment_status": "paid",
+         "created_at": {"$gte": thirty_days_ago}},
+        {"_id": 0, "credits": 1, "amount": 1, "created_at": 1}
+    ).to_list(50)
+    
+    # Video generation history (last 30 days)
+    recent_videos = await db.generated_videos.find(
+        {"user_id": user_id, "created_at": {"$gte": thirty_days_ago}},
+        {"_id": 0, "credits_used": 1, "duration": 1, "quality": 1, "created_at": 1}
+    ).to_list(100)
+    
+    credits_spent_30d = sum(v.get("credits_used", 0) for v in recent_videos)
+    
+    # Recent images for gallery
+    recent_images = await db.generated_images.find(
+        {"user_id": user_id}, {"_id": 0, "id": 1, "prompt": 1, "storage_path": 1, "created_at": 1}
+    ).sort("created_at", -1).to_list(20)
+    
+    for img in recent_images:
+        img["image_url"] = f"/api/files/{img['storage_path']}"
+    
+    return {
+        "totals": {"messages": total_messages, "images": total_images, "videos": total_videos},
+        "credits_spent_30d": credits_spent_30d,
+        "current_credits": user.get("video_credits", 0),
+        "credit_purchases": credit_purchases,
+        "recent_videos": recent_videos,
+        "recent_images": recent_images,
+    }
+
+# ---------------------
 # Feedback Endpoints
 # ---------------------
 @api_router.post("/feedback")
@@ -686,8 +927,8 @@ async def submit_feedback(req: FeedbackRequest, request: Request):
 # Stripe Subscription Endpoints
 # ---------------------
 SUBSCRIPTION_PLANS = {
-    "pro_reasoning": {"name": "Reasoning Pro", "amount": 12.00, "role": "pro_reasoning"},
-    "pro_creative": {"name": "Creative Pro", "amount": 24.00, "role": "pro_creative"}
+    "pro_reasoning": {"name": "Reasoning Pro", "amount": 19.00, "role": "pro_reasoning"},
+    "pro_creative": {"name": "Creative Pro", "amount": 39.00, "role": "pro_creative"}
 }
 
 @api_router.post("/checkout/create")
@@ -783,9 +1024,10 @@ async def get_checkout_status(session_id: str, request: Request):
                 if plan in SUBSCRIPTION_PLANS:
                     new_role = SUBSCRIPTION_PLANS[plan]["role"]
                     update_fields = {"role": new_role}
-                    # Initialize credits for Creative Pro
-                    if new_role == "pro_creative":
-                        update_fields["video_credits"] = 100
+                    # Initialize credits for pro tiers
+                    tier = TIER_LIMITS.get(new_role, {})
+                    if tier.get("uses_credits"):
+                        update_fields["video_credits"] = tier.get("monthly_credits", 0)
                         update_fields["credits_reset_date"] = datetime.now(timezone.utc).isoformat()
                     await db.users.update_one(
                         {"_id": ObjectId(tx["user_id"])},
@@ -837,8 +1079,9 @@ async def stripe_webhook(request: Request):
                     if plan in SUBSCRIPTION_PLANS:
                         new_role = SUBSCRIPTION_PLANS[plan]["role"]
                         update_fields = {"role": new_role}
-                        if new_role == "pro_creative":
-                            update_fields["video_credits"] = 100
+                        tier = TIER_LIMITS.get(new_role, {})
+                        if tier.get("uses_credits"):
+                            update_fields["video_credits"] = tier.get("monthly_credits", 0)
                             update_fields["credits_reset_date"] = datetime.now(timezone.utc).isoformat()
                         await db.users.update_one(
                             {"_id": ObjectId(tx["user_id"])},
@@ -872,17 +1115,28 @@ async def get_user_usage(request: Request):
     img_count = user.get("daily_image_count", 0) if user.get("last_image_date") == today else 0
     vid_count = user.get("daily_video_count", 0) if user.get("last_video_date") == today else 0
     
-    # Monthly credit reset for Creative Pro
+    # Monthly credit reset for pro tiers
     video_credits = user.get("video_credits", 0)
-    if role == "pro_creative":
+    if role in ("pro_reasoning", "pro_creative"):
         reset_date = user.get("credits_reset_date")
         now = datetime.now(timezone.utc)
+        monthly_credits = limits.get("monthly_credits", 0)
         if not reset_date or (now - datetime.fromisoformat(reset_date)).days >= 30:
-            video_credits = limits.get("monthly_credits", 100)
+            video_credits = monthly_credits
             await db.users.update_one(
                 {"_id": ObjectId(user["_id"])},
                 {"$set": {"video_credits": video_credits, "credits_reset_date": now.isoformat()}}
             )
+    
+    # Free video trial check
+    video_locked = False
+    if role == "free":
+        created_at = user.get("created_at")
+        if created_at:
+            signup_date = datetime.fromisoformat(created_at)
+            days_since = (datetime.now(timezone.utc) - signup_date).days
+            if days_since > 7:
+                video_locked = True
     
     return {
         "role": role,
@@ -897,6 +1151,7 @@ async def get_user_usage(request: Request):
         "video_quality": limits["video_quality"],
         "watermark": limits["watermark"],
         "uses_credits": limits["uses_credits"],
+        "video_locked": video_locked if role == "free" else False,
     }
 
 # ---------------------
@@ -920,8 +1175,8 @@ async def purchase_credits(req: CreditPurchaseRequest, request: Request):
     user = await get_current_user(request)
     role = user.get("role", "free")
     
-    if role != "pro_creative" and role != "admin":
-        raise HTTPException(status_code=403, detail="Credit top-ups are only available for Creative Pro users.")
+    if role not in ("pro_reasoning", "pro_creative", "admin"):
+        raise HTTPException(status_code=403, detail="Credit top-ups are only available for Pro users.")
     
     if req.pack_id not in CREDIT_PACKS:
         raise HTTPException(status_code=400, detail="Invalid credit pack")

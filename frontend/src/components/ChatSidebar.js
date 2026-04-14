@@ -2,9 +2,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus, MessageSquare, Trash2, Zap, LogOut, Crown, X, Image, Video, Coins, Shield } from "lucide-react";
+import { Plus, MessageSquare, Trash2, Zap, LogOut, Crown, X, Image, Video, Coins, Shield, UserCircle, BarChart3 } from "lucide-react";
 
-export default function ChatSidebar({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, usage, onNavigatePricing, onNavigateCredits, onNavigateAdmin, onClose }) {
+export default function ChatSidebar({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, usage, onNavigatePricing, onNavigateCredits, onNavigateAdmin, onNavigateVideos, onNavigateAvatars, onNavigateAnalytics, onClose }) {
   const { user, logout } = useAuth();
   const role = usage.role || "free";
   const isFree = role === "free";
@@ -41,7 +41,7 @@ export default function ChatSidebar({ chats, activeChatId, onSelectChat, onNewCh
       </div>
 
       {/* New Chat button */}
-      <div className="px-3 mb-2 shrink-0">
+      <div className="px-3 mb-1 shrink-0">
         <Button
           onClick={onNewChat}
           variant="outline"
@@ -51,6 +51,21 @@ export default function ChatSidebar({ chats, activeChatId, onSelectChat, onNewCh
           <Plus className="w-4 h-4" />
           New chat
         </Button>
+      </div>
+
+      {/* Quick nav */}
+      <div className="px-3 mb-2 shrink-0 flex gap-1">
+        <button onClick={onNavigateVideos} className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[#a1a1aa] hover:text-white text-[10px] transition-all" data-testid="nav-videos">
+          <Video className="w-3 h-3" /> Videos
+        </button>
+        <button onClick={onNavigateAvatars} className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[#a1a1aa] hover:text-white text-[10px] transition-all" data-testid="nav-avatars">
+          <UserCircle className="w-3 h-3" /> Avatars
+        </button>
+        {role !== "free" && (
+          <button onClick={onNavigateAnalytics} className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[#a1a1aa] hover:text-white text-[10px] transition-all" data-testid="nav-analytics">
+            <BarChart3 className="w-3 h-3" /> Stats
+          </button>
+        )}
       </div>
 
       {/* Chat list */}
@@ -167,9 +182,19 @@ export default function ChatSidebar({ chats, activeChatId, onSelectChat, onNewCh
                     <span className="text-[10px] text-[#fafafa]">{imgCount}/{imgLimit}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-[#a1a1aa] flex items-center gap-1"><Video className="w-3 h-3" /> Videos</span>
-                    <span className="text-[10px] text-[#fafafa]">{vidCount}/{vidLimit}</span>
+                    <span className="text-[10px] text-[#a1a1aa] flex items-center gap-1"><Coins className="w-3 h-3" /> Video Credits</span>
+                    <span className="text-[10px] text-[#fafafa] font-medium">{usage.video_credits || 0}</span>
                   </div>
+                  <Button
+                    onClick={onNavigateCredits}
+                    size="sm"
+                    variant="outline"
+                    className="w-full mt-1 h-6 bg-white/5 border-white/10 hover:bg-white/10 text-white text-[10px]"
+                    data-testid="buy-credits-button"
+                  >
+                    <Coins className="w-3 h-3 mr-1" />
+                    Buy Credits
+                  </Button>
                 </div>
               )}
               {/* Show credits for Creative Pro */}

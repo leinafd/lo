@@ -1,0 +1,198 @@
+{
+  "summary": {
+    "total_tests": 60,
+    "passed_tests": 53,
+    "success_rate": "88.3%",
+    "timestamp": "2026-04-14T07:23:11.215220",
+    "phase": "Phase 3 - Video Generation, Avatars, Analytics, Updated Pricing"
+  },
+  "results": [
+    {
+      "test": "Auth Register",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:19:02.518730"
+    },
+    {
+      "test": "Auth Login (Admin)",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:19:02.785213"
+    },
+    {
+      "test": "Auth Me",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:19:02.830990"
+    },
+    {
+      "test": "Brute Force Protection",
+      "success": false,
+      "details": "",
+      "timestamp": "2026-04-14T07:19:03.204686"
+    },
+    {
+      "test": "Auth Logout",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:19:03.247218"
+    },
+    {
+      "test": "Auth Login (Admin)",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:19:03.516452"
+    },
+    {
+      "test": "Chat Send Message",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:19:06.072396"
+    },
+    {
+      "test": "Chat List",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:19:06.117990"
+    },
+    {
+      "test": "Chat Get Messages",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:19:06.164049"
+    },
+    {
+      "test": "Chat Delete",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:19:06.209072"
+    },
+    {
+      "test": "Claude Chat Integration",
+      "success": true,
+      "details": "Claude response received",
+      "timestamp": "2026-04-14T07:19:08.775201"
+    },
+    {
+      "test": "Claude Error Handling",
+      "success": true,
+      "details": "No budget errors encountered (key has balance)",
+      "timestamp": "2026-04-14T07:19:16.502617"
+    },
+    {
+      "test": "Image Generation",
+      "success": true,
+      "details": "Image generated successfully",
+      "timestamp": "2026-04-14T07:19:35.683901"
+    },
+    {
+      "test": "Register user for image limit test",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:19:35.953057"
+    },
+    {
+      "test": "Image Generation Limits",
+      "success": false,
+      "details": "Unexpected response for image 1",
+      "timestamp": "2026-04-14T07:20:35.991924"
+    },
+    {
+      "test": "Admin Image Bypass",
+      "success": false,
+      "details": "Unexpected response: None",
+      "timestamp": "2026-04-14T07:21:36.083373"
+    },
+    {
+      "test": "User Images List",
+      "success": false,
+      "details": "Expected 200, got 502",
+      "timestamp": "2026-04-14T07:22:36.170370"
+    },
+    {
+      "test": "File Serving",
+      "success": true,
+      "details": "File served with content-type: image/png",
+      "timestamp": "2026-04-14T07:22:59.141644"
+    },
+    {
+      "test": "Video Generation",
+      "success": true,
+      "details": "Mocked video generated successfully",
+      "timestamp": "2026-04-14T07:22:59.185245"
+    },
+    {
+      "test": "Register user for video trial test",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:22:59.497974"
+    },
+    {
+      "test": "Video Free Trial",
+      "success": true,
+      "details": "Free user can generate videos within trial period",
+      "timestamp": "2026-04-14T07:22:59.541245"
+    },
+    {
+      "test": "Video Credit System",
+      "success": true,
+      "details": "Admin should not use credits",
+      "timestamp": "2026-04-14T07:22:59.624917"
+    },
+    {
+      "test": "Video History",
+      "success": true,
+      "details": "Found 2 videos",
+      "timestamp": "2026-04-14T07:22:59.667112"
+    },
+    {
+      "test": "Avatar List",
+      "success": true,
+      "details": "Admin avatar limit: 99",
+      "timestamp": "2026-04-14T07:22:59.751103"
+    },
+    {
+      "test": "Avatar Creation",
+      "success": false,
+      "details": "Status: 500",
+      "timestamp": "2026-04-14T07:22:59.909553"
+    },
+    {
+      "test": "Register user for avatar limit test",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:23:00.179883"
+    },
+    {
+      "test": "Avatar Limits",
+      "success": true,
+      "details": "Free user limit: 1 (expected 1)",
+      "timestamp": "2026-04-14T07:23:00.262271"
+    },
+    {
+      "test": "Avatar Deletion",
+      "success": true,
+      "details": "Avatar deleted successfully",
+      "timestamp": "2026-04-14T07:23:00.389771"
+    },
+    {
+      "test": "User Memory",
+      "success": true,
+      "details": "Memory system working",
+      "timestamp": "2026-04-14T07:23:00.502830"
+    },
+    {
+      "test": "Register user for memory persistence test",
+      "success": true,
+      "details": "",
+      "timestamp": "2026-04-14T07:23:00.809323"
+    },
+    {
+      "test": "Memory Persistence",
+      "success": true,
+      "details": "Free user memory persistence: False (should be False)",
+      "timestamp": "2026-04-14T07:23:00.863258"
+    },
+    {
+      "test": "Analytics Access",
+      "success": 

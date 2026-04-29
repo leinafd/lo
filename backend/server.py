@@ -795,7 +795,8 @@ async def create_avatar(request: Request, name: str = "", face_photo: UploadFile
         avatar_doc["body_path"] = body_path
     
     await db.avatars.insert_one(avatar_doc)
-    return avatar_doc
+    # Return clean response without _id
+    return {k: v for k, v in avatar_doc.items() if k != "_id"}
 
 @api_router.delete("/avatars/{avatar_id}")
 async def delete_avatar(avatar_id: str, request: Request):
